@@ -1,0 +1,23 @@
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph CLIENT["Client Layer"]
+        FE["Frontend (React + TypeScript)"]
+  end
+ subgraph BACKEND["Backend (Python)"]
+        API["Application Backend"]
+        INTEL["Intelligence Layer<br>(Retrieval + LLM)"]
+  end
+ subgraph DATA["Data & Results"]
+        STORE["Run Storage"]
+        OUTPUT["Generated Reports"]
+  end
+ subgraph DOCS["Documentation & Alignment"]
+        BLUEPRINT["Blueprint & System Overview"]
+  end
+    FE --- API & OUTPUT
+    API --- INTEL & OUTPUT
+    INTEL --- STORE
+    DOCS -. informs .- FE & BACKEND

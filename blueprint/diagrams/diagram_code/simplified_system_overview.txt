@@ -1,0 +1,15 @@
+graph TB
+  %% === SYSTEM OVERVIEW (Highest Level) ===
+
+  USER["User"]
+  FRONTEND["Frontend<br/>(React + TypeScript)"]
+  BACKEND["Backend<br/>(Python Application)"]
+  LLM["Intelligence Layer<br/>(Retrieval + LLM)"]
+  RESULTS["Results & Reports"]
+
+  USER --> FRONTEND
+  FRONTEND --> BACKEND
+  BACKEND --> LLM
+  LLM --> BACKEND
+  BACKEND --> RESULTS
+  FRONTEND --> RESULTS

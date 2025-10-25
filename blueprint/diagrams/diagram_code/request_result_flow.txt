@@ -1,0 +1,43 @@
+%%{init: {'flowchart': {'rankdir':'TB'}}}%%
+flowchart TB
+  %% === LAYER 0: CLIENT ===
+  subgraph L0["Client Layer"]
+    U[User]
+    FE["Frontend (React + TypeScript)"]
+  end
+
+  %% === LAYER 1: API ===
+  subgraph L1["Backend Interface"]
+    API["REST API (Python backend)"]
+  end
+
+  %% === LAYER 2: CORE PROCESSING ===
+  subgraph L2["Core Processing Layer"]
+    IN["Input Adapter<br/>(model file parsing)"]
+    EVAL["Criteria Engine<br/>(maturity evaluation)"]
+    AI["Retrieval-Augmented Analysis<br/>(RAG / LLM)"]
+  end
+
+  %% === LAYER 3: DATA & OUTPUT ===
+  subgraph L3["Data & Results"]
+    DB["(Temporary Storage<br/>(per analysis run))"]
+    OUT["[Results & Reports<br/>(JSON / HTML / PDF)]"]
+  end
+
+  %% === FLOW ===
+  U --> FE
+  FE -- Request analysis --> API
+  API -- Send model file --> IN
+  IN -- Normalized data --> EVAL
+  EVAL -- Evidence + scores --> DB
+
+  API -- Explain request --> AI
+  AI -- Read evidence & refs --> DB
+  AI -- Structured explanation --> API
+
+  API -- Retrieve summaries/evidence --> DB
+  API -- Serve --> OUT
+  FE -- Display results --> U
+
+  classDef dim fill:#f5f5f5,stroke:#888,stroke-width:1px,color:#222;
+  class L0,L1,L2,L3 dim;
