@@ -47,3 +47,9 @@ Build a backend + UI that ingests MBSE model exports, evaluates maturity across 
 - **CDR**: validated ladder, expanded criteria, RAG in place.
 - **MVP**: end-to-end demo on sponsor model(s).
 - **Final**: full report, recommendations per model, lessons learned.
+
+---
+
+### Link to System Overview (.md)
+
+[View full System Overview ›](./blueprint/SYSTEM_OVERVIEW.md)
