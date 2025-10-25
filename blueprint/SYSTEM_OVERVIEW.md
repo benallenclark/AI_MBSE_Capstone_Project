@@ -20,7 +20,8 @@ It explains how the system fits together, where each part lives, and how to oper
 
 | Area                | Path                            | Purpose                                                   |
 | ------------------- | ------------------------------- | --------------------------------------------------------- |
-| **API**             | `backend/app/api`               | FastAPI endpoints                                         |
+| **API**             | `backend/app/api`               | FastAPI endpoints and routers                             |
+| **Core**            | `backend/app/core`              | Config, logging, startup                                  |
 | **Criteria**        | `backend/app/criteria/mml_*`    | Maturity ladder logic (criteria per level)                |
 | **Input Adapters**  | `backend/app/input_adapters/`   | XML parsers per tool/version (`sparx/v17_1`, `cameo/...`) |
 | **RAG**             | `backend/app/rag`               | Retrieval + LLM context builder                           |
@@ -34,31 +35,50 @@ It explains how the system fits together, where each part lives, and how to oper
 
 ## 4. Runbook
 
-### Backend (Python)
+### Backend (Python 3.12.10 + FastAPI)
+
+**Prerequisite - Install Python 3.12.10**
+
+- Go to official download page:
+  - https://www.python.org/downloads/release/python-31210/
+  - Scroll down to the "Files" section
+  - Under Windows, choose:
+    - Windows installer (64-bit) -> python-3.12.10-amd64.exe
+  - Run the installer
+    - Check "Add Python to PATH" before clicking _Install Now_
+  - Verify Installation
+    - py -3.12 --version
+    - _You should see Python 3.12.10_
 
 **1. Create and activate a virtual environment**
 
 ```bash
     cd backend
-    python -m venv .venv
-
-    # Activate (Windows PowerShell)
+    py -3.12 -m venv .venv
     .\.venv\Scripts\Activate
+    python -V # should show 3.12.10
 ```
 
-**2. Install dependencies**
+**2. Upgrade pip**
 
 ```bash
-    pip install -r requirements.txt
+    python -m pip install -U pip
 ```
 
-**3. Start backend server**
+**3. Install backend in editable mode**
 
 ```bash
-    uvicorn app.api.main:app --reload
+    pip install -e .
 ```
 
-**3. Analyze a model**
+**4. Run the API server**
+
+```bash
+    uvicorn app.main:app --reload
+    # The API docs will be at http://127.0.0.1:8000/v1/docs
+```
+
+**5. Analyze a model**
 
 ```bash
     # TODO: show how to do this once analysis endpoint is ready

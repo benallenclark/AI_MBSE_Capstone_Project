@@ -1,0 +1,30 @@
+# Build backend: standard, least resistance
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"] # DECISION: stick with setuptools
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mbse-maturity"
+version = "0.1.0"                          # Bump up on user-visible changes; tag releases
+description = "AI-assisted MBSE model maturity evaluator"
+
+# Minor Python window to avoid stdlib conflicts
+requires-python = ">=3.12,<3.13"
+
+# Runtime dependencies: pin app servers tightly
+dependencies = [
+  "fastapi==0.120.0",                     # DECISION: lock exact FastAPI for API stability
+  "uvicorn[standard]==0.38.0",            # Includes httptools/uvloop/websockets
+  "python-multipart==0.0.20",             # For form-data upload endpoints
+  "pydantic>=2",                          # Any 2.x
+  "pydantic-settings>=2",                 # Any 2.x; environment parsing
+]
+
+# Package discovery: ship only the app code
+[tool.setuptools.packages.find]
+where = [""]                              # Search from the repository root
+include = ["app*"]                        # Keep tests/data out by default
+
+# Uvicorn CLI defaults
+[tool.uvicorn]
+factory = false                           # create_app() returns an instance, not a factory
