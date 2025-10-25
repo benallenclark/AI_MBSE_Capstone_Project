@@ -18,6 +18,14 @@ dependencies = [
   "python-multipart==0.0.20",             # For form-data upload endpoints
   "pydantic>=2",                          # Any 2.x
   "pydantic-settings>=2",                 # Any 2.x; environment parsing
+  "defusedxml>=0.7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.2",
+  "pytest-cov>=7",
+  "httpx>=0.28.1",
 ]
 
 # Package discovery: ship only the app code
