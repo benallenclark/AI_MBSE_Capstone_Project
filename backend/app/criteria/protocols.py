@@ -24,7 +24,7 @@ Developer Guidance:
 """
 
 from dataclasses import dataclass
-from typing import Protocol, Any, Tuple
+from typing import Protocol, Any, Tuple, Mapping
 import sqlite3
 
 
@@ -78,7 +78,7 @@ class Predicate(Protocol):
         ...     rows = db.execute("SELECT COUNT(*) FROM t_object").fetchone()[0]
         ...     return rows > 0, {"object_count": rows}
     """
-    def __call__(self, db: DbLike, ctx: Context) -> Tuple[bool, dict[str, Any]]:
+    def __call__(self, db: DbLike, ctx: Context) -> Tuple[bool, Mapping[str, Any]]:
         ...
 
 

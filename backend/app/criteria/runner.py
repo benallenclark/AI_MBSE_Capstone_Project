@@ -58,7 +58,7 @@ def run_predicates(
     evidence: List[EvidenceItem] = []
     for group, pid, fn in discover(groups):
         ok, details = fn(db, ctx)
-        evidence.append(EvidenceItem(predicate=f"{group}:{pid}", passed=ok, details=details))
+        evidence.append(EvidenceItem(predicate=f"{group}:{pid}", passed=ok, details=dict(details)))
 
     # Simplest heuristic: number of passed predicates = maturity level.
     level = sum(1 for e in evidence if e.passed)

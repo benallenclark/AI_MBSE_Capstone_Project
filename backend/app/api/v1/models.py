@@ -108,6 +108,13 @@ class EvidenceItem(BaseModel):
     predicate: str
     passed: bool
     details: dict[str, Any] = {}
+    
+    @field_validator("details", mode="before")
+    @classmethod
+    def no_strings(cls, v):
+        if isinstance(v, str):
+            raise ValueError("details must be an object, not a JSON string")
+        return v
 
 
 class AnalyzeResponse(BaseModel):
