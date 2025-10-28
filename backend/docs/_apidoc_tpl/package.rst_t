@@ -1,5 +1,7 @@
-{{ objname }} package
-=====================
+{% set title = objname ~ " package" %}
+{{ "=" * title|length }}
+{{ title }}
+{{ "=" * title|length }}
 
 .. toctree::
    :maxdepth: 1
