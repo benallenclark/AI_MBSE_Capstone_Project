@@ -13,7 +13,7 @@ requires-python = ">=3.12,<3.13"
 
 # Runtime dependencies
 dependencies = [
-  "fastapi==0.120.0",                     # DECISION: lock exact FastAPI for API stability
+  "fastapi==0.120.0",                     # DECISION: Use exact FastAPI for API stability
   "uvicorn[standard]==0.38.0",            # Includes httptools/uvloop/websockets
   "python-multipart==0.0.20",             # For form-data upload endpoints
   "pydantic>=2",                          # Any 2.x
@@ -28,10 +28,21 @@ dev = [
   "httpx>=0.28.1",
 ]
 
+docs = [
+  "sphinx>=8.2.3",
+  "furo>=2025.09.25",                 # theme
+  "myst-parser>=4.0.1",               # Markdown in Sphinx
+  "sphinx-autodoc-typehints>=3.5.2",  # clean type-hint rendering
+  "sphinx-copybutton>=0.5.2",         # UX for code blocks
+]
+
 # Package discovery: ship only the app code
 [tool.setuptools.packages.find]
 where = [""]                              # Search from the repository root
 include = ["app*"]                        # Keep tests/data out by default
+
+[tool.setuptools.package-data]
+"app.tempdb" = ["schema.sql"]
 
 # Uvicorn CLI defaults
 [tool.uvicorn]
