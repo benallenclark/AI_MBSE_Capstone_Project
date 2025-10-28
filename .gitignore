@@ -1,5 +1,79 @@
-.venv/
-**/__pycache__/
-*.sqlite
-runs/**
-mbse_maturity.egg-info
+# ========================================
+# Backend-specific Git ignore
+# ========================================
+
+# --- Python build / cache ---
+backend/**/__pycache__/
+backend/**/*.py[cod]
+backend/**/*.pyo
+backend/**/*.pyd
+backend/**/*.pdb
+backend/**/*.egg-info/
+backend/**/*.egg
+backend/dist/
+backend/build/
+backend/.eggs/
+backend/.mypy_cache/
+backend/.pytest_cache/
+backend/.cache/
+backend/coverage.xml
+backend/htmlcov/
+
+# --- Virtual environments ---
+backend/.venv/
+backend/venv/
+backend/ENV/
+backend/env/
+backend/env.bak/
+
+# --- IDEs / editors ---
+backend/.vscode/
+backend/.idea/
+backend/**/*.swp
+
+# --- Local runtime / data ---
+backend/**/*.sqlite
+backend/**/*.db
+backend/**/*.log
+backend/runs/
+backend/logs/
+backend/tmp/
+backend/temp/
+backend/instance/
+
+# --- FastAPI / Uvicorn runtime ---
+backend/**/*.pid
+
+# --- Documentation (generated) ---
+backend/docs/_build/
+backend/docs/api/
+backend/docs/.doctrees/
+
+# --- Optional (if unused) ---
+# backend/docs/_static/
+# backend/docs/_templates/
+
+# --- OS cruft ---
+backend/.DS_Store
+backend/Thumbs.db
+backend/desktop.ini
+
+# --- Packaging / pip ---
+backend/**/*.wheel
+backend/**/*.whl
+backend/pip-wheel-metadata/
+backend/mbse_maturity.egg-info/
+
+# --- Notebooks / experiments ---
+backend/**/*.ipynb_checkpoints
+
+# --- Misc ---
+backend/.env
+backend/.env.*
+backend/**/*.bak
+
+# ========================================
+# Frontend-specific Git ignore
+# ========================================
+
+# --- To Be Determined ---
