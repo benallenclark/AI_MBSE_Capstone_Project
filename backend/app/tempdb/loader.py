@@ -31,6 +31,7 @@ import logging
 import sqlite3
 from typing import Iterable
 from xml.etree.ElementTree import iterparse
+import re, codecs
 
 # -----------------------------------------------------------------------------
 # Globals and configuration
@@ -51,8 +52,71 @@ RESERVED = {"default"}
 
 
 # -----------------------------------------------------------------------------
-# Helpers: tag/column normalization and schema management
+# Helpers: XML normalization, attribute casing, and SQLite schema utilities
 # -----------------------------------------------------------------------------
+# These functions handle low-level tasks such as:
+#   - Decoding XML bytes with uncertain or inconsistent encodings
+#   - Wrapping XML fragments in a single synthetic root element
+#   - Normalizing attribute keys to lowercase
+#   - Ensuring SQLite tables and columns exist before insertion
+# They isolate messy edge cases so higher-level parsers can assume clean input.
+# -----------------------------------------------------------------------------
+_XML_ENC_RE = re.compile(br'<\?xml[^>]*encoding=["\']([^"\']+)["\']', re.IGNORECASE)
+
+def _normalize_xml_bytes(xml: bytes) -> bytes:
+    """Decode using declared/BOM encoding, then re-encode as UTF-8, stripping XML decl.
+    Keeps content intact, then we can safely wrap in a single root."""
+    s = xml.lstrip()
+    
+    # Detect and decode based on BOM or encoding declaration
+    if s.startswith(codecs.BOM_UTF8):
+        text = s[len(codecs.BOM_UTF8):].decode("utf-8", errors="strict")
+    elif s.startswith(codecs.BOM_UTF16_LE) or s.startswith(codecs.BOM_UTF16_BE):
+        # let Python detect endian via 'utf-16'
+        text = s.decode("utf-16", errors="strict")
+    elif s.startswith(codecs.BOM_UTF32_LE) or s.startswith(codecs.BOM_UTF32_BE):
+        text = s.decode("utf-32", errors="strict")
+    else:
+        # Fallback: parse encoding from XML header or assume UTF-8
+        m = _XML_ENC_RE.search(s[:200])  # only header
+        enc = m.group(1).decode("ascii").strip().lower() if m else "utf-8"
+        text = s.decode(enc, errors="strict")
+    # Remove the XML declaration to avoid double declarations after wrapping
+    text = re.sub(r'^\s*<\?xml[^>]*\?>', '', text, count=1, flags=re.IGNORECASE)
+    return text.encode("utf-8")
+
+def _wrap_single_root(xml: bytes) -> bytes:
+    """Ensure the XML content has a single root element.
+    Useful when vendor exports omit a top-level wrapper."""
+    utf8 = _normalize_xml_bytes(xml)
+    return b"<root>" + utf8.strip() + b"</root>"
+
+def _attrs_lower(elem) -> dict[str, str]:
+    """Return a dict of element attributes with lowercase keys for case-insensitive access."""
+    return {k.casefold(): v for k, v in elem.attrib.items()}
+
+def _table_exists(db: sqlite3.Connection, table: str) -> bool:
+    """Check whether a table already exists in the SQLite database."""
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (table,)
+    ).fetchone() is not None
+
+def _ensure_table_with_cols(db: sqlite3.Connection, table: str, cols: Iterable[str]) -> None:
+    """Create the table if missing, or ensure all expected columns exist.
+
+    Notes:
+        - Adds missing columns dynamically.
+        - If no columns are provided on first creation, inserts a placeholder.
+    """
+    cols = list(cols)
+    if _table_exists(db, table):
+        _ensure_columns(db, table, cols)
+    else:
+        if not cols: # SQLite disallows empty CREATE TABLE statements
+            cols = ["_placeholder"]
+        cols_sql = ",".join(f'"{c}" TEXT' for c in cols)
+        db.execute(f'CREATE TABLE "{table}" ({cols_sql})')
+
 def _lname(tag: str) -> str:
     """Return local tag name without namespace and in casefolded form.
 
@@ -78,12 +142,6 @@ def _norm_col(name: str) -> str:
     if n in RESERVED:
         n = f"{n}_value"
     return n
-
-
-def _ensure_table(db: sqlite3.Connection, table: str) -> None:
-    """Create the target table if it does not exist."""
-    db.execute(f'CREATE TABLE IF NOT EXISTS "{table}"(dummy TEXT)')
-
 
 def _ensure_columns(db: sqlite3.Connection, table: str, cols: Iterable[str]) -> None:
     """Add any missing columns to the table to match the provided iterable."""
@@ -135,9 +193,11 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
         - Clears parsed XML elements to keep memory usage low.
     """
     # In-memory shared-cache DB; no persistence on disk.
-    db = sqlite3.connect("file:mbse?mode=memory&cache=shared", uri=True)
+    xml_bytes = _wrap_single_root(xml_bytes)
+    
+    db = sqlite3.connect(":memory:", isolation_level="DEFERRED", check_same_thread=False)
     db.executescript(
-        "PRAGMA journal_mode=OFF;"
+        "PRAGMA journal_mode=MEMORY;"
         "PRAGMA synchronous=OFF;"
         "PRAGMA temp_store=MEMORY;"
     )
@@ -156,10 +216,7 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
     current_table: str | None = None
     batch_cols: list[str] = []
     batch_rows: list[tuple[str, ...]] = []
-    parse_counts: dict[str, int] = {}  # local: table → xml rows seen
-
-    def bump(t: str) -> None:
-        parse_counts[t] = parse_counts.get(t, 0) + 1
+    local_counts: dict[str, int] = {}  # local: table → xml rows seen
 
     def flush_batch() -> None:
         """Insert the accumulated batch for the current table."""
@@ -178,42 +235,39 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
         name = _lname(elem.tag)
 
         if event == "start" and name in ("dataset", "dataset_0", "table"):
-            # New logical table scope
-            t = (elem.attrib.get("name") or elem.attrib.get("table") or "").strip().strip('"').strip("'")
-            t = t.casefold()
+            attrs = _attrs_lower(elem)
+            t = (attrs.get("name") or attrs.get("table") or "").strip().strip('"').strip("'").casefold()
+            # accept whitelisted tables; if you want to be looser, use startswith("t_")
             current_table = t if t in TABLES else None
             if current_table:
-                _ensure_table(db, current_table)
                 batch_cols = []
                 batch_rows = []
+                # initialize local count bucket so logs don't show missing keys
+                local_counts[current_table] = local_counts.get(current_table, 0)
 
         elif event == "start" and name in ("data", "rows"):
-            # Expecting <row> children
             batch_cols = []
             batch_rows = []
 
         elif event == "end" and name == "row" and current_table:
-            # Row is complete at END; children/attributes are available
-            rec = _row_dict(elem)
-            bump(current_table)
-            if not rec:
-                rec = {"_empty_row": "1"}  # preserve structural empties
+            rec = _row_dict(elem) or {"_empty_row": "1"}
 
-            # Initialize or widen schema based on first/extra columns observed
             if not batch_cols:
                 batch_cols = list(rec.keys())
-                _ensure_columns(db, current_table, batch_cols)
+                _ensure_table_with_cols(db, current_table, batch_cols)
             else:
                 extra = [c for c in rec.keys() if c not in batch_cols]
                 if extra:
                     _ensure_columns(db, current_table, extra)
-                    # Pad previously accumulated rows to the new width
                     if batch_rows:
+                        pad = tuple("" for _ in extra)
                         for i in range(len(batch_rows)):
-                            batch_rows[i] = tuple(batch_rows[i]) + tuple("" for _ in extra)
+                            batch_rows[i] = tuple(batch_rows[i]) + pad
                     batch_cols.extend(extra)
 
             batch_rows.append(tuple(rec.get(c, "") for c in batch_cols))
+            # increment per-table xml row counter
+            local_counts[current_table] = local_counts.get(current_table, 0) + 1
             elem.clear()
 
         elif event == "end" and name in ("data", "rows"):
@@ -226,7 +280,6 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
             elem.clear()
 
         else:
-            # Drop references early to reduce memory footprint
             if event == "end":
                 elem.clear()
 
@@ -243,7 +296,7 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
         for t in sorted(TABLES):
             if t in tables:
                 db_cnt = db.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
-                xml_cnt = parse_counts.get(t, 0)
+                xml_cnt = local_counts.get(t, 0)
                 log.info("count %-18s xml_seen=%d db_rows=%d", t, xml_cnt, db_cnt)
     except Exception:
         # Logging should never break the loader.
