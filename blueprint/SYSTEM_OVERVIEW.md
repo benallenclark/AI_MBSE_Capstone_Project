@@ -68,7 +68,7 @@ It explains how the system fits together, where each part lives, and how to oper
 **3. Install backend in editable mode**
 
 ```bash
-    pip install -e .[dev]
+    pip install -e .[dev,docs]
 ```
 
 **4. Run the API server**
