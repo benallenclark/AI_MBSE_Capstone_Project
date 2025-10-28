@@ -49,10 +49,6 @@ backend/docs/_build/
 backend/docs/api/
 backend/docs/.doctrees/
 
-# --- Optional (if unused) ---
-# backend/docs/_static/
-# backend/docs/_templates/
-
 # --- OS cruft ---
 backend/.DS_Store
 backend/Thumbs.db
