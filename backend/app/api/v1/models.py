@@ -17,7 +17,7 @@ Developer Guidance:
 """
 
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, field_validator
 import base64
 
@@ -104,10 +104,10 @@ class EvidenceItem(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-
     predicate: str
     passed: bool
     details: dict[str, Any] = {}
+    error: str | None = None
     
     @field_validator("details", mode="before")
     @classmethod
@@ -134,3 +134,20 @@ class AnalyzeResponse(BaseModel):
 
     maturity_level: int
     evidence: list[EvidenceItem] = []
+
+
+class PredicateResult(BaseModel):
+    id: str            # e.g., "mml_2:block_has_port"
+    mml: int           # parsed from the id
+    passed: bool
+    duration_ms: int
+    details: Dict[str, Any]
+    error: Optional[str] = None
+
+class AnalyzeContract(BaseModel):
+    # JSON contract v1 (matches contracts/v1/analyze_response.schema.json)
+    schema_version: str = "1.0"
+    model: Dict[str, str]             # {"vendor": "...", "version": "..."}
+    maturity_level: int
+    summary: Dict[str, int]           # {"total","passed","failed","duration_ms"}
+    results: List[PredicateResult]

@@ -153,26 +153,44 @@ def _ensure_columns(db: sqlite3.Connection, table: str, cols: Iterable[str]) -> 
 
 
 def _row_dict(elem) -> dict[str, str]:
-    """Extract a row payload from a <row> element.
-
-    Strategy:
-        - Prefer attributes on <row> itself.
-        - Otherwise collect child fields: name/value attrs or text content.
-
-    Returns:
-        dict[str, str]: Column → value mapping with normalized column names.
-    """
     if elem.attrib:
-        return {_norm_col(k): v for k, v in elem.attrib.items()}
+        rec = {_norm_col(k): v for k, v in elem.attrib.items()}
+        return rec
+
     rec: dict[str, str] = {}
     for child in list(elem):
-        name = child.attrib.get("name") or _lname(child.tag)
-        val = child.attrib.get("value")
-        if val is None:
-            val = (child.text or "").strip()
+        tag = _lname(child.tag)
+
+        # Sparx <Column name="X" value="Y"/>
+        if tag == "column":
+            name = child.attrib.get("name")
+            val  = child.attrib.get("value", "")
+            if name:
+                k = _norm_col(name)
+                rec[k] = val
+                if k in ("parentid", "package_id", "ea_guid"):
+                    #log.info(f"[row_dict] COLUMN captured {k}={val}")
+                    pass
+            continue
+
+        # Sparx <Extension ...>
+        if tag == "extension":
+            for k, v in child.attrib.items():
+                nk = _norm_col(f"extension_{k}")  # extension_parentid, extension_package_id
+                rec[nk] = v
+                if nk in ("extension_parentid", "extension_package_id"):
+                    # log.info(f"[row_dict] EXT captured {nk}={v}")
+                    pass
+            continue
+
+        # Fallback
+        name = child.attrib.get("name") or tag
+        val = child.attrib.get("value") or (child.text or "").strip()
         if name:
-            rec[_norm_col(name)] = val
+            k = _norm_col(name)
+            rec[k] = val
     return rec
+
 
 
 # -----------------------------------------------------------------------------
@@ -254,10 +272,12 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
 
             if not batch_cols:
                 batch_cols = list(rec.keys())
+                #log.info(f"[widen] init table={current_table} cols={batch_cols}")
                 _ensure_table_with_cols(db, current_table, batch_cols)
             else:
                 extra = [c for c in rec.keys() if c not in batch_cols]
                 if extra:
+                    #log.info(f"[widen] table={current_table} add_cols={extra}")
                     _ensure_columns(db, current_table, extra)
                     if batch_rows:
                         pad = tuple("" for _ in extra)
@@ -265,7 +285,16 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
                             batch_rows[i] = tuple(batch_rows[i]) + pad
                     batch_cols.extend(extra)
 
+            # Spot-log target fields per row
+            if current_table == "t_object":
+                for k in ("parentid", "extension_parentid", "extension_package_id"):
+                    if k in rec and rec[k]:
+                        #log.info(f"[row] t_object {k}={rec[k]}")
+                        pass
+
             batch_rows.append(tuple(rec.get(c, "") for c in batch_cols))
+            
+            
             # increment per-table xml row counter
             local_counts[current_table] = local_counts.get(current_table, 0) + 1
             elem.clear()
@@ -281,10 +310,36 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
 
         else:
             if event == "end":
-                elem.clear()
+                pass
 
     flush_batch()
     db.execute("COMMIT")
+
+    # Post-commit checks
+    def _has_col(tbl, col):
+        return any(r[1].casefold() == col for r in db.execute(f'PRAGMA table_info("{tbl}")'))
+
+    log.debug("[verify] t_object has parentid: %s", _has_col("t_object", "parentid"))
+    log.debug("[verify] t_object has extension_parentid: %s", _has_col("t_object", "extension_parentid"))
+    log.debug("[verify] t_object has extension_package_id: %s", _has_col("t_object", "extension_package_id"))
+
+    try:
+        cnt = db.execute('SELECT COUNT(*) FROM t_object WHERE object_type="Port" AND IFNULL(parentid,"")<>""').fetchone()[0]
+        #log.debug("[verify] Ports with parentid count: %s", cnt)
+    except Exception as e:
+        #log.debug("[verify] query error parentid: %s", e)
+        pass
+
+    try:
+        rows = db.execute(
+            'SELECT object_id, name, parentid, extension_parentid, extension_package_id '
+            'FROM t_object WHERE object_type="Port" LIMIT 5'
+        ).fetchall()
+        # log.debug("[verify] sample ports: %s", rows)
+    except Exception as e:
+        # log.info("[verify] sample ports error: %s", e)
+        pass
+
 
     # Optional sanity logs for table counts (useful while bringing up adapters)
     try:
@@ -297,7 +352,8 @@ def load_xml_to_mem(xml_bytes: bytes) -> sqlite3.Connection:
             if t in tables:
                 db_cnt = db.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
                 xml_cnt = local_counts.get(t, 0)
-                log.info("count %-18s xml_seen=%d db_rows=%d", t, xml_cnt, db_cnt)
+                #log.info("count %-18s xml_seen=%d db_rows=%d", t, xml_cnt, db_cnt)
+
     except Exception:
         # Logging should never break the loader.
         pass

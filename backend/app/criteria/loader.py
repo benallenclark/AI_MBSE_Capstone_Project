@@ -107,7 +107,7 @@ def discover(groups: Iterable[str] | None = None) -> List[Tuple[str, str, Predic
         pid = getattr(mod, "PREDICATE_ID", parts[-1])
 
         if callable(func):
-            log.info("Loaded predicate group=%s id=%s module=%s", group, pid, modname)
+            log.debug("Loaded predicate group=%s id=%s module=%s", group, pid, modname)
             results.append((group, pid, cast(Predicate, func)))
         else:
             log.debug("Skip: no evaluate() found in %s", modname)

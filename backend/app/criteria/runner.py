@@ -3,63 +3,73 @@
 # Purpose: Execute all maturity predicates against parsed models.
 # ------------------------------------------------------------
 
-"""Predicate runner: executes all maturity tests (predicates) against a parsed model.
+"""Execute all maturity predicates against a parsed model.
 
-Summary:
-    Orchestrates discovery and execution of predicate functions across
-    maturity-level groups (MML-1…MML-10). Each predicate function receives
-    a live database handle and contextual metadata, then returns a boolean
-    and an evidence dictionary.
-
-Details:
-    - Discovers all predicates dynamically via `criteria.loader.discover()`.
-    - Each predicate returns `(passed: bool, details: dict)`.
-    - Produces an `EvidenceItem` list summarizing which predicates passed.
-    - Aggregates a numeric maturity level = count of passed predicates.
-
-Developer Guidance:
-    - Extendable: add new predicates under `app/criteria/mml_*`.
-    - Ensure each predicate function is deterministic and idempotent.
-    - Avoid long-running queries; all checks must complete quickly.
+- Discovers predicates via `criteria.loader.discover()`.
+- Each predicate returns `(passed: bool, details: dict)`.
+- Returns maturity level = count of passed predicates and evidence list.
+- Centralizes timing/logging; predicates stay pure.
 """
 
+from __future__ import annotations
 
-from typing import List
+import logging
+from typing import List  # or drop and use built-in list[...] everywhere
 from .protocols import Context, DbLike
 from .loader import discover
 from app.api.v1.models import EvidenceItem
+from app.utils.timing import now_ns, ms_since
 
+log = logging.getLogger("maturity.criteria.runner")
+
+PREDICATE_SLA_MS = 100  # trigger warning at 100ms
 
 def run_predicates(
     db: DbLike,
     ctx: Context,
-    groups: list[str] | None = None
-) -> tuple[int, List[EvidenceItem]]:
-    """Run all discovered maturity predicates and return results.
+    groups: list[str] | None = None,
+) -> tuple[int, list[EvidenceItem]]:
+    """Run discovered predicates and return (maturity_level, evidence)."""
+    evidence: list[EvidenceItem] = []
 
-    Args:
-        db: Database-like object (typically an SQLite connection) containing parsed model data.
-        ctx: Context object containing metadata such as vendor, version, and model_id.
-        groups: Optional list of predicate groups to restrict execution
-                (e.g., `["mml_1", "mml_2"]`). If None, all groups are run.
+    model_id = getattr(ctx, "model_id", None)
+    vendor = getattr(ctx, "vendor", "")
+    version = getattr(ctx, "version", "")
 
-    Returns:
-        tuple:
-            int: Aggregate maturity level (count of passed predicates).
-            List[EvidenceItem]: Structured results for all predicate checks.
-
-    Example:
-        >>> level, evidence = run_predicates(db, Context(vendor="sparx", version="17.1", model_id="test"))
-        >>> print(level)
-        5
-        >>> print(evidence[0].predicate, evidence[0].passed)
-        mml_1:count_tables True
-    """
-    evidence: List[EvidenceItem] = []
     for group, pid, fn in discover(groups):
-        ok, details = fn(db, ctx)
-        evidence.append(EvidenceItem(predicate=f"{group}:{pid}", passed=ok, details=dict(details)))
+        t0 = now_ns()
+        status = "ok"
+        err: Exception | None = None
+        ok = False
+        details_dict: dict = {}
 
-    # Simplest heuristic: number of passed predicates = maturity level.
-    level = sum(1 for e in evidence if e.passed)
-    return level, evidence
+        try:
+            ok, details = fn(db, ctx)
+            details_dict = dict(details)
+        except Exception as ex:
+            status = "error"
+            err = ex
+            ok = False
+            details_dict = {}
+        finally:
+            dur_ms = ms_since(t0)   # float ms
+            dur_ms_str = f"{dur_ms:.3f}" if dur_ms < 1.0 else f"{int(round(dur_ms))}"
+            log_level = logging.WARNING if dur_ms > PREDICATE_SLA_MS else logging.INFO
+            log.log(
+                log_level,
+                "perf event=predicate group=%s id=%s model_id=%s vendor=%s version=%s "
+                "status=%s dur_ms=%s%s",
+                group, pid, model_id, vendor, version, status, dur_ms_str,
+                "" if not err else f" err={type(err).__name__}:{err}",
+            )
+            if err:
+                # stack trace once, at ERROR
+                log.error("predicate_failed group=%s id=%s model_id=%s", group, pid, model_id, exc_info=True)
+
+        if err is None:
+            evidence.append(EvidenceItem(predicate=f"{group}:{pid}", passed=ok, details=details_dict))
+        else:
+            evidence.append(EvidenceItem(predicate=f"{group}:{pid}", passed=False, details={}, error=str(err)))
+
+    maturity_level = sum(1 for e in evidence if e.passed)
+    return maturity_level, evidence

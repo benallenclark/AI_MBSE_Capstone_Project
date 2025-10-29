@@ -1,6 +1,6 @@
 # ------------------------------------------------------------
 # Module: app/input_adapters/sparx/v17_1/adapter.py
-# Purpose: Implement the Sparx Enterprise Architect v17.1 adapter for model ingestion.
+# Purpose: Sparx EA v17.1 to an in-memory SQLite adapter.
 # ------------------------------------------------------------
 
 """Sparx Enterprise Architect v17.1 adapter.
@@ -29,9 +29,16 @@ Developer Guidance:
 from __future__ import annotations
 
 import sqlite3
+import logging
+import hashlib
 from app.input_adapters.protocols import Adapter
-from app.tempdb.loader import load_xml_to_mem  # Converts XML bytes → sqlite3.Connection
+from app.utils.timing import now_ns, ms_since
+from app.tempdb.loader import load_xml_to_mem
 
+__all__ = ("Sparx171",)
+
+log = logging.getLogger("maturity.adapter.sparx171")
+DEBUG_SHA = False
 
 class Sparx171(Adapter):
     """Adapter for Sparx Enterprise Architect v17.1 models.
@@ -65,4 +72,24 @@ class Sparx171(Adapter):
             >>> rows = conn.execute('SELECT COUNT(*) FROM t_object').fetchone()
         """
         # Parse XML and materialize t_* tables entirely in RAM
-        return load_xml_to_mem(xml_bytes)
+        
+        if not xml_bytes:
+            raise ValueError("empty_xml")
+        
+        t0 = now_ns()
+        try:
+            sha8 = hashlib.sha256(xml_bytes).hexdigest()[:8]
+            conn = load_xml_to_mem(xml_bytes)
+            dur_ms = ms_since(t0)
+            dur_ms_str = f"{dur_ms:.3f}" if dur_ms < 1.0 else f"{int(round(dur_ms))}"
+            log.info(
+                "timing stage=adapter vendor=sparx version=17.1 bytes=%d sha8=%s dur_ms=%s",
+                len(xml_bytes), sha8, dur_ms_str
+            )
+            return conn
+        except Exception as e:
+            log.error(
+                "adapter_build_db_failed vendor=sparx version=17.1",
+                exc_info=True,
+            )
+            raise ValueError(f"sparx171_parse_failed: {e}") from e
