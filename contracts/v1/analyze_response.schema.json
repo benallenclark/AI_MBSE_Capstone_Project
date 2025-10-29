@@ -27,12 +27,11 @@
 
     "summary": {
       "type": "object",
-      "required": ["total", "passed", "failed", "duration_ms"],
+      "required": ["total", "passed", "failed"],
       "properties": {
         "total": { "type": "integer", "minimum": 0 },
         "passed": { "type": "integer", "minimum": 0 },
-        "failed": { "type": "integer", "minimum": 0 },
-        "duration_ms": { "type": "integer", "minimum": 0 }
+        "failed": { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },
@@ -41,12 +40,11 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "mml", "passed", "duration_ms", "details"],
+        "required": ["id", "mml", "passed", "details"],
         "properties": {
           "id": { "type": "string", "pattern": "^mml_\\d+:[a-z0-9_]+$" },
           "mml": { "type": "integer", "minimum": 0 },
           "passed": { "type": "boolean" },
-          "duration_ms": { "type": "integer", "minimum": 0 },
           "details": { "type": "object" },
           "error": { "type": "string", "minLength": 1 }
         },

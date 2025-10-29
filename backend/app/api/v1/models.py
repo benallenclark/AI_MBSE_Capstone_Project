@@ -140,7 +140,6 @@ class PredicateResult(BaseModel):
     id: str            # e.g., "mml_2:block_has_port"
     mml: int           # parsed from the id
     passed: bool
-    duration_ms: int
     details: Dict[str, Any]
     error: Optional[str] = None
 
@@ -149,5 +148,5 @@ class AnalyzeContract(BaseModel):
     schema_version: str = "1.0"
     model: Dict[str, str]             # {"vendor": "...", "version": "..."}
     maturity_level: int
-    summary: Dict[str, int]           # {"total","passed","failed","duration_ms"}
+    summary: Dict[str, int]           # {"total","passed","failed"}
     results: List[PredicateResult]

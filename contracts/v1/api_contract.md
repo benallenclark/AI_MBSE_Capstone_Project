@@ -11,13 +11,12 @@
   "schema_version": "1.0",
   "model": { "vendor": "sparx", "version": "17.1" },
   "maturity_level": 2,
-  "summary": { "total": 2, "passed": 2, "failed": 0, "duration_ms": 87 },
+  "summary": { "total": 2, "passed": 2, "failed": 0 },
   "results": [
     {
       "id": "mml_1:count_tables",
       "mml": 1,
       "passed": true,
-      "duration_ms": 12,
       "details": {
         "vendor": "sparx",
         "version": "17.1",
@@ -46,7 +45,6 @@
       "id": "mml_2:block_has_port",
       "mml": 2,
       "passed": true,
-      "duration_ms": 75,
       "details": {
         "vendor": "sparx",
         "version": "17.1",

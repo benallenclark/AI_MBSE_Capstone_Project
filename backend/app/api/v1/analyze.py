@@ -60,7 +60,7 @@ def analyze(req: AnalyzeRequest, response: Response) -> AnalyzeContract:
         AnalyzeContract: Contract v1 payload with
             - ``model`` (vendor/version),
             - ``maturity_level`` (aggregate),
-            - ``summary`` (``total``, ``passed``, ``failed``, ``duration_ms``),
+            - ``summary`` (``total``, ``passed``, ``failed``),
             - ``results`` (list of ``PredicateResult``).
 
     Raises:
@@ -200,7 +200,7 @@ def _analyze_impl(req: AnalyzeRequest, response: Response) -> AnalyzeContract:
         return AnalyzeContract(
             model={"vendor": req.vendor.value, "version": req.version},
             maturity_level=level,
-            summary={"total": len(results), "passed": passed, "failed": failed, "duration_ms": total_ms_int},
+            summary={"total": len(results), "passed": passed, "failed": failed},
             results=results,
         )
 
@@ -234,7 +234,6 @@ def _normalize_results(evidence: list[EvidenceItem]) -> list[PredicateResult]:
             - ``id``: ``"<group>:<predicate>"`` (e.g., ``"mml_2:block_has_port"``)
             - ``mml``: Parsed integer from group (defaults to 0 on parse failure)
             - ``passed``: Predicate outcome
-            - ``duration_ms``: Int (0 for now; fill if per-predicate timing is added)
             - ``details``: Predicate-defined, JSON-serializable dictionary
             - ``error``: Optional string (omitted when None)
 
@@ -256,8 +255,7 @@ def _normalize_results(evidence: list[EvidenceItem]) -> list[PredicateResult]:
             PredicateResult(
                 id=pid,
                 mml=mml,
-                passed=bool(e.passed),
-                duration_ms=0,     
+                passed=bool(e.passed),    
                 details=dict(e.details),
                 error=(str(e.error) if getattr(e, "error", None) else None),
             )
