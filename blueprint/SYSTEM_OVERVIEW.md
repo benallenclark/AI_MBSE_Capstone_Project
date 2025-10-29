@@ -78,10 +78,24 @@ It explains how the system fits together, where each part lives, and how to oper
     # The API docs will be at http://127.0.0.1:8000/v1/docs
 ```
 
-**5. Analyze a model**
+**5. Analyze a model and inspect output**
 
-```bash
-    # TODO: show how to do this once analysis endpoint is ready
+Backend returns JSON used by the LLM and the UI. Test locally with:
+
+_PowerShell (Windows):_
+
+```powershell
+curl.exe -s -F "vendor=sparx" -F "version=17.1" `
+  -F "file=@samples\sparx\v17_1\DellSat-77_System.xml;type=application/xml" `
+  http://127.0.0.1:8000/v1/analyze/upload | python -m json.tool
+```
+
+You can also create output.json to the backend/ folder to view the json:
+
+```powershell
+curl.exe -s -F "vendor=sparx" -F "version=17.1" `
+  -F "file=@samples\sparx\v17_1\DellSat-77_System.xml;type=application/xml" `
+  http://127.0.0.1:8000/v1/analyze/upload | python -m json.tool | Out-file -FilePath output.json -Encoding utf8
 ```
 
 ### Frontend (React + TypeScript)
