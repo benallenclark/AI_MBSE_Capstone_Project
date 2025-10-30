@@ -1,0 +1,6 @@
+@import '../../../styles/globals.css';
+
+.upload-page {
+  min-height: 100vh;
+  background-color: #ffffff;
+}
