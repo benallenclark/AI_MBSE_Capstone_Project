@@ -2,45 +2,37 @@
 # Module: app/api/v1/routes.py
 # Purpose: Define and compose all version 1 API routers.
 # ------------------------------------------------------------
-
-"""API router entrypoint for version 1 of the MBSE Maturity backend.
-
-Summary:
-    Defines the version-scoped FastAPI router (`/v1`) and mounts sub-routers
-    for health checks and model analysis endpoints.
-
-Details:
-    Keeping each API version in its own router supports backward compatibility.
-    When `/v2` or later versions are added, this structure can be duplicated
-    without affecting existing routes.
-
-Developer Guidance:
-    - To add a new functional area (e.g., `/v1/users`), create
-      `app/api/v1/users.py` with its own `router` and include it here.
-    - Keep versioned routes isolated to simplify long-term API versioning.
-    - Avoid embedding business logic; this module should only compose routers.
-"""
-
+from __future__ import annotations
 from fastapi import APIRouter
+from app.core.config import settings
+
+# Versioned sub-routers (all under /v1)
 from app.api.v1.health import router as health_router
 from app.api.v1.analyze import router as analyze_router
+from app.api.v1.rag import router as rag_router
+from app.api.v1.jobs import router as jobs_router
+from app.api.v1.rag_stream import router as rag_stream_router
+from app.api.v1.schemas import public_router as models_public_router, internal_router as models_internal_router
 
-# -----------------------------------------------------------------------------
-# Create the root router for version 1
-# -----------------------------------------------------------------------------
+# v1 composition root:
+# - app.main mounts this under /v1
+# - Keep inclusion order stable for deterministic OpenAPI tag/group order.
 router: APIRouter = APIRouter()
 
-# -----------------------------------------------------------------------------
-# Mount sub-routers
-# -----------------------------------------------------------------------------
-router.include_router(
-    health_router,
-    prefix="/health",
-    tags=["health"],
-)
+# Sub-routers by domain; tags double as doc group names—avoid renaming casually.
+router.include_router(health_router, prefix="/health", tags=["health"])
+router.include_router(analyze_router, prefix="/analyze", tags=["analyze"])
 
-router.include_router(
-    analyze_router,
-    prefix="/analyze",
-    tags=["analyze"],
-)
+# RAG (sync + streaming) share the /rag prefix and "rag" tag so they show together in docs.
+# Ensure unique subpaths to avoid conflicts (e.g., /ask vs /ask/stream).
+router.include_router(rag_router, prefix="/rag", tags=["rag"])
+router.include_router(rag_stream_router, prefix="/rag", tags=["rag"])
+
+router.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
+router.include_router(models_public_router, prefix="/models", tags=["models"])
+
+# Internal-only routes:
+# - Gated by settings.EXPOSE_INTERNALS; keep False in production.
+# - Consider setting include_in_schema=False inside those endpoints if you must mount them.
+if getattr(settings, "EXPOSE_INTERNALS", False):
+    router.include_router(models_internal_router, prefix="/models", tags=["internal"])
