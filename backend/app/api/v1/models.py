@@ -1,84 +1,47 @@
 # ------------------------------------------------------------
 # Module: app/api/v1/models.py
-# Purpose: Define request and response models for maturity analysis.
+# Purpose: Define request/response contracts for the analysis API.
 # ------------------------------------------------------------
-
-"""Pydantic models shared by the analysis API endpoints.
-
-Summary:
-    Defines validated data structures used by both `/v1/analyze` JSON and
-    multipart endpoints. Handles base64 decoding for XML uploads and ensures
-    consistent typing for backend logic.
-
-Developer Guidance:
-    - Keep these models minimal and serialization-safe.
-    - Avoid importing business logic here; this layer defines I/O contracts only.
-    - Extend with new fields *only* after updating all dependent routes and tests.
-"""
+from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import base64
 
-
+# Wire enum (serialized as strings):
+# - Values are part of the public API. Changing them is a breaking change.
 class Vendor(str, Enum):
-    """Supported MBSE modeling tool vendors.
-
-    Attributes:
-        sparx (str): Represents Sparx Enterprise Architect exports.
-        cameo (str): Represents Cameo Systems Modeler exports.
-
-    Developer Guidance:
-        Use `Vendor` to ensure vendor-specific parsing logic stays explicit.
-        Do not compare vendor strings manually—use the Enum members.
-    """
-
+    """Supported MBSE vendors."""
     sparx = "sparx"
     cameo = "cameo"
 
-
+# JSON request for /v1/analyze (non-multipart):
+# - Use this model only for JSON uploads. Multipart uses UploadFile directly.
+# - Enforce strict contract (extra="forbid") to avoid silent field drift.
 class AnalyzeRequest(BaseModel):
-    """Incoming request model for `/v1/analyze`.
+    """JSON request payload for /v1/analyze (non-multipart).
 
-    Attributes:
-        model_id (str | None): Optional identifier for the uploaded model.
-        vendor (Vendor): The MBSE tool type ("sparx" or "cameo").
-        version (str): Tool version string (e.g., "17.1").
-        xml_bytes (bytes): Raw XML content as bytes or base64-encoded string.
-
-    Developer Guidance:
-        - Keep validation lightweight; heavy parsing occurs downstream.
-        - For multipart uploads, FastAPI handles binary bytes automatically.
-        - For JSON uploads, XML content must be base64-encoded.
+    Note:
+        - For multipart uploads, FastAPI gives bytes directly (no need for this model).
+        - For JSON uploads, `xml_bytes` must be base64-encoded; we decode here.
     """
-
+    
+    # Reject unknown fields so clients can't send accidental/ignored data.
     model_config = ConfigDict(extra="forbid")
-
+    
     model_id: str | None = None
     vendor: Vendor
     version: str
-    xml_bytes: bytes  # JSON: base64 string → bytes; multipart: bytes
+    
+    # For JSON, xml_bytes must be base64; 
+    # the validator below decodes to raw bytes.
+    xml_bytes: bytes
 
+    # Accept bytes or base64 string; fail fast with clear errors on bad input.
     @field_validator("xml_bytes", mode="before")
     @classmethod
     def _b64_to_bytes(cls, v: Any) -> bytes:
-        """Decode a base64-encoded XML payload when received via JSON.
-
-        Args:
-            v (Any): Raw input value (may be bytes, bytearray, or base64 string).
-
-        Returns:
-            bytes: Decoded XML bytes ready for in-memory processing.
-
-        Raises:
-            ValueError: If the string cannot be base64-decoded.
-            TypeError: If the input type is unsupported.
-
-        Developer Guidance:
-            This conversion allows consistent handling between JSON and multipart
-            upload routes. Avoid performing any XML parsing here.
-        """
         if isinstance(v, (bytes, bytearray)):
             return bytes(v)
         if isinstance(v, str):
@@ -88,65 +51,52 @@ class AnalyzeRequest(BaseModel):
                 raise ValueError("xml_bytes must be base64-encoded") from e
         raise TypeError("xml_bytes must be bytes or base64 string")
 
-
+# Internal evidence row (pre-API):
+# - details must be a JSON object (not a string); keep it small & serializable.
 class EvidenceItem(BaseModel):
-    """Single maturity criterion result.
-
-    Attributes:
-        predicate (str): Name of the evaluated maturity predicate.
-        passed (bool): True if the predicate condition succeeded.
-        details (dict[str, Any]): Optional context or diagnostic data.
-
-    Developer Guidance:
-        - Keep `details` JSON-serializable.
-        - Use concise, human-readable keys for clarity in the frontend.
-        - Avoid nesting deeply; this is meant for summaries, not full traces.
-    """
-
+    """Single maturity predicate result (used internally and summarized for responses)."""
     model_config = ConfigDict(extra="forbid")
+
     predicate: str
     passed: bool
-    details: dict[str, Any] = {}
-    error: str | None = None
-    
+    details: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+
+    # Guard against dumping JSON strings into "details" by mistake.
     @field_validator("details", mode="before")
     @classmethod
-    def no_strings(cls, v):
+    def _details_must_be_object(cls, v):
         if isinstance(v, str):
             raise ValueError("details must be an object, not a JSON string")
         return v
 
-
-class AnalyzeResponse(BaseModel):
-    """Response model for `/v1/analyze` results.
-
-    Attributes:
-        maturity_level (int): Highest verified MML level achieved.
-        evidence (list[EvidenceItem]): Predicate results per maturity check.
-
-    Developer Guidance:
-        - Always include all predicates evaluated, even if failed.
-        - The frontend uses this to visualize maturity progress.
-        - Do not perform post-processing here—serialize directly.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    maturity_level: int
-    evidence: list[EvidenceItem] = []
-
-
+# Public predicate result:
+# - id encodes rung + rule (e.g., "mml_2:block_has_port"); keep it stable.
+# - mml parsed from id for quick UI grouping/filtering.
 class PredicateResult(BaseModel):
-    id: str            # e.g., "mml_2:block_has_port"
-    mml: int           # parsed from the id
+    """Flattened, response-friendly predicate row."""
+    id: str                  # e.g., "mml_2:block_has_port"
+    mml: int                 # parsed from id
     passed: bool
     details: Dict[str, Any]
     error: Optional[str] = None
 
+# Canonical analysis response:
+# - schema_version guards wire compatibility; bump only on breaking changes.
+# - "model" carries vendor/version echo for client caching and display.
 class AnalyzeContract(BaseModel):
-    # JSON contract v1 (matches contracts/v1/analyze_response.schema.json)
+    """Canonical response type for /v1/analyze and /v1/analyze/upload."""
     schema_version: str = "1.0"
     model: Dict[str, str]             # {"vendor": "...", "version": "..."}
     maturity_level: int
     summary: Dict[str, int]           # {"total","passed","failed"}
     results: List[PredicateResult]
+
+# Explicit export surface for imports and docs; keep in sync with public API.
+__all__ = [
+    "Vendor",
+    "AnalyzeRequest",
+    "EvidenceItem",
+    "PredicateResult",
+    "AnalyzeContract",
+]
