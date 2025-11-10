@@ -54,7 +54,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "DEBUG"
     ACCESS_LOG: bool = True
     MUTE_ALL_LOGS: bool = False
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000",
+    ]
     MAX_UPLOAD_MB: int = 200
 
     # When True, mounts internal/debug routers (expose file paths, raw evidence).
