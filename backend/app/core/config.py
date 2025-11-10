@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     MUTE_ALL_LOGS: bool = False
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
 
     # Settings behavior
     model_config = SettingsConfigDict(

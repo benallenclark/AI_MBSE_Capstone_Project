@@ -31,15 +31,19 @@ export default function FileDrop({
     multiple: true
   });
 
+  const isSingleFile = maxFiles === 1;
+
   return (
-    <div 
-      {...getRootProps()} 
+    <div
+      {...getRootProps()}
       className={`dropzone ${isDragActive ? 'drag-active' : ''} ${isDragReject ? 'drag-reject' : ''} ${disabled ? 'disabled' : ''}`}
     >
       <input {...getInputProps()} />
       <div className="dropzone__content">
         <h2 className="dropzone__headline">
-          {isDragActive ? 'Drop model files here' : 'Drag model files here'}
+          {isDragActive
+            ? `Drop ${isSingleFile ? 'model file' : 'model files'} here`
+            : `Drag ${isSingleFile ? 'model file' : 'model files'} here`}
         </h2>
         <button
           type="button"
@@ -47,7 +51,7 @@ export default function FileDrop({
           disabled={disabled}
         >
           <MdOutlineAdd className="dropzone__button-icon" />
-          Add Models
+          {isSingleFile ? 'Add Model' : 'Add Models'}
         </button>
         <p className="dropzone__description">
           Accepted file types: {acceptedFileTypes.join(', ')}
