@@ -1,3 +1,22 @@
+[tool.ruff]
+target-version = "py312" # Always generate Python 3.12-compatible code.
+line-length = 88
+indent-width = 4
+lint.select = ["E", "F", "W", "B", "UP", "I", "ANN", "C4", "SIM"]
+# "ANN" checks for missing type annotations
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportOptionalSubscript = "error"
+reportOptionalMemberAccess = "warning"
+reportUnusedImport = "warning"
+reportPrivateImportUsage = "none"
+
 # Build backend: standard with least resistance
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"] # DECISION: stick with setuptools
@@ -27,6 +46,11 @@ dev = [
   "pytest-cov>=7",
   "httpx>=0.28.1",
   "jsonschema>=4.25.1",
+  "duckdb>=1.4.1",
+  "lxml>=6.0.2",
+  "pandas>=2.3.3",
+  "parquet>=1.3.1",
+  "pyarrow>=22.0.0",
 ]
 
 docs = [

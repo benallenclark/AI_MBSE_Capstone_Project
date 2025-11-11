@@ -1,59 +1,39 @@
 # ------------------------------------------------------------
-# Module: app/input_adapters/protocols.py
-# Purpose: Define the standard interface for vendor-specific model adapters.
+# Module: app/criteria/protocols.py
+# Purpose: Minimal adapter interface and options for routing by (vendor, version).
 # ------------------------------------------------------------
 
-"""Protocol definitions for model input adapters.
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, Mapping
 
-Summary:
-    Defines the common interface that all vendor-specific model adapters
-    must implement to integrate with the MBSE Maturity analysis pipeline.
+# `frozen=True` prevents reassigning fields but does not deep-freeze nested objects.
+# Invariant: treat `AdapterOptions` as read-only; 
+# if you need deep immutability, wrap mappings (e.g., MappingProxyType).
+@dataclass(frozen=True)
+class AdapterOptions:
+    vendor: str
+    version: str
+    
+    # room for vendor quirks later (namespaces, known stereotypes, etc.)
+    # `frozenset()` is not a Mapping and will fail on `.get`/indexing; use an empty dict or MappingProxyType instead.
+    # Invariant: `extra` should behave like a read-only dict of string→string vendor quirks.
+    extra: Mapping[str, str] = frozenset()  # cheap immutable mapping
 
-Details:
-    - Each adapter converts a vendor’s native model export
-      (e.g., Sparx Enterprise Architect XML, Cameo `.mdxml`)
-      into a temporary, standardized data store such as an in-memory SQLite database.
-    - The analysis engine executes SQL-based predicates on this database
-      to determine model maturity and produce evidence for higher-level reporting.
+class InputAdapter:
+    # Subclasses must set `VENDOR`/`VERSION` to lowercase constants (e.g., "sparx", "17.1").
+    # Invariant: these define the adapter’s identity; never derive them from user input.
+    VENDOR: str
+    VERSION: str
 
-Developer Guidance:
-    - Each adapter must implement the `Adapter` protocol below.
-    - Keep the interface minimal to avoid coupling and vendor-specific logic.
-    - Always return a live `sqlite3.Connection` that callers can close safely.
-    - Handle XML parsing and schema mapping entirely inside the adapter.
-    - Never import or depend on FastAPI modules—this layer must remain backend-agnostic.
-"""
+    # Compares `vendor.lower()`/`version.lower()` to class constants; ensure class values are lowercased.
+    # Consider trimming whitespace on inputs upstream; unmatched values mean “not my adapter.”
+    @classmethod
+    def matches(cls, vendor: str, version: str) -> bool:
+        return vendor.lower() == cls.VENDOR and version.lower() == cls.VERSION
 
-from typing import Protocol
-import sqlite3
-
-
-class Adapter(Protocol):
-    """Interface for vendor-specific model adapters.
-
-    Methods:
-        build_db(xml_bytes: bytes) -> sqlite3.Connection:
-            Parse the given XML byte stream and return a ready-to-query
-            SQLite connection containing the model’s extracted tables.
-
-    Example:
-        class Sparx171(Adapter):
-            def build_db(self, xml_bytes: bytes) -> sqlite3.Connection:
-                # Parse native Sparx XML
-                # Populate temp SQLite DB with t_object, t_connector, etc.
-                return connection
-    """
-
-    def build_db(self, xml_bytes: bytes) -> sqlite3.Connection:
-        """Convert XML bytes into an in-memory SQLite database.
-
-        Args:
-            xml_bytes (bytes): The raw XML data from a model export.
-
-        Returns:
-            sqlite3.Connection: Live SQLite connection with parsed model data.
-
-        Raises:
-            ValueError: If parsing or database population fails.
-        """
-        ...
+    # Ignores caller’s strings and emits class constants—call only after `matches(...)` returns True.
+    # Invariant: `AdapterOptions.vendor/version` reflect the adapter, not user input; `extra` starts empty.
+    @classmethod
+    def make_options(cls, vendor: str, version: str) -> AdapterOptions:
+        return AdapterOptions(vendor=cls.VENDOR, version=cls.VERSION, extra={})

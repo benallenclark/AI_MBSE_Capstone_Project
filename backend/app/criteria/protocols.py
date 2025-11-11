@@ -24,13 +24,13 @@ Developer Guidance:
 """
 
 from dataclasses import dataclass
-from typing import Protocol, Any, Tuple, Mapping
-import sqlite3
+from typing import Protocol, Any, Tuple, Mapping, Iterable
+from pathlib import Path
 
 
-# -----------------------------------------------------------------------------
-# Analysis context
-# -----------------------------------------------------------------------------
+# Immutable analysis metadata passed to every predicate.
+# - Carries vendor/version + per-model paths needed for queries/writes.
+# - Designed for pure predicates: treat as read-only.
 @dataclass(frozen=True)
 class Context:
     """Immutable metadata passed to every predicate evaluation.
@@ -39,25 +39,27 @@ class Context:
         vendor (str): Model vendor name (e.g., "sparx", "cameo").
         version (str): Vendor tool version string.
         model_id (str | None): Optional unique model identifier for traceability.
+        model_dir (Path): Per-model working directory (e.g., for DuckDB, evidence).
+        output_root (Path | None): Root for any generated artifacts when needed.
 
     Example:
         >>> ctx = Context(vendor="sparx", version="17.1", model_id="demo123")
     """
     vendor: str
     version: str
+    model_dir: Path
     model_id: str | None = None
+    output_root: Path | None = None
 
+# Minimal DB surface to support sqlite3 and duckdb in tests and prod.
+# - Keep usage to .execute(...) and read-only SELECTs inside predicates.
+class DbLike(Protocol):
+    def execute(self, sql: str, params: Iterable[Any] | None = None, /) -> Any: ...
 
-# -----------------------------------------------------------------------------
-# Type aliases
-# -----------------------------------------------------------------------------
-DbLike = sqlite3.Connection
-"""Alias for database handle type. Keeps predicates decoupled from concrete DB drivers."""
-
-
-# -----------------------------------------------------------------------------
-# Predicate interface
-# -----------------------------------------------------------------------------
+# Predicate contract:
+# - Pure function: (db, ctx) -> (passed, details)
+# - No I/O, no logging; return small, JSON-serializable 'details'.
+# - Deterministic given the same db and ctx.
 class Predicate(Protocol):
     """Callable interface every maturity predicate must implement.
 
@@ -81,5 +83,5 @@ class Predicate(Protocol):
     def __call__(self, db: DbLike, ctx: Context) -> Tuple[bool, Mapping[str, Any]]:
         ...
 
-
+# Explicit export surface; keep aligned with imports elsewhere.
 __all__ = ["Context", "Predicate", "DbLike"]

@@ -1,86 +1,140 @@
-# ------------------------------------------------------------
-# Module: app/core/config.py
-# Purpose: Centralize application configuration and environment management.
-# ------------------------------------------------------------
+# app/core/config.py
+from __future__ import annotations
 
-"""Application configuration and environment management.
+from pathlib import Path
+from typing import Literal
 
-Summary:
-    Centralizes all environment-driven configuration using Pydantic Settings.
-    Ensures predictable runtime behavior between development and production
-    by enforcing strict schema validation and typed defaults.
-
-Details:
-    - Reads environment variables (via `.env` or system environment).
-    - Provides consistent configuration for logging, CORS, and environment flags.
-    - Fails fast on unknown keys to avoid silent misconfiguration.
-    - Converts comma-separated CORS origins into proper list form.
-
-Developer Guidance:
-    - Define all environment-dependent settings here—never hardcode in code.
-    - Keep defaults minimal and safe for development.
-    - Use `settings.APP_ENV` for environment-specific branching.
-    - Add new fields with clear defaults and type annotations.
-    - Validate sensitive configuration values before startup to prevent runtime errors.
-"""
-
-from typing import Literal, Union
-from pydantic import field_validator
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Always load backend/.env regardless of CWD
+_ENV_FILE = (Path(__file__).resolve().parents[1] / ".env").as_posix()
 
-# -----------------------------------------------------------------------------
-# Configuration model
-# -----------------------------------------------------------------------------
+
+# Central, typed configuration loaded from env + .env.
+# Import `settings` from this module everywhere instead of re-reading env.
 class Settings(BaseSettings):
-    """Global environment configuration for the MBSE Maturity API.
-
-    Attributes:
-        APP_ENV (Literal["dev", "prod"]): Deployment environment mode.
-        LOG_LEVEL (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]): Global logging verbosity.
-        ACCESS_LOG (bool): Enables or disables Uvicorn’s access logs.
-        MUTE_ALL_LOGS (bool): If True, suppresses all log output.
-        CORS_ORIGINS (list[str]): List of allowed origins for CORS middleware.
-
-    Behavior:
-        - Reads from `.env` file automatically.
-        - Forbids unknown configuration keys (ensures schema compliance).
-        - Coerces comma-separated string of origins into a list.
-    """
-
-    # Environment configuration
-    APP_ENV: Literal["dev", "prod"] = "dev"
-    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "DEBUG"
-    ACCESS_LOG: bool = True  # Toggle uvicorn.access on/off
-    MUTE_ALL_LOGS: bool = False
-
-    # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
-
-    # Settings behavior
+    # Env wiring:
+    # - env_file points at backend/.env (absolute) so CWD never matters.
+    # - env_prefix=MBSE_ prevents accidental key collisions.
+    # - extra="forbid" catches unknown env keys early (fail-fast).
     model_config = SettingsConfigDict(
-        env_file=".env",  # load environment from this file if present
-        extra="forbid",   # fail on unknown env vars to ensure stability
+        env_file=_ENV_FILE,  # ← absolute path to backend/.env
+        env_prefix="MBSE_",  # ← avoid stray env keys; reads MBSE_DEFAULT_XML, etc.
+        extra="forbid",
+        case_sensitive=False,
     )
 
-    # -----------------------------------------------------------------------------
-    # Validators
-    # -----------------------------------------------------------------------------
+    # Anchor for resolving other paths; prefer deriving from this over using CWD.
+    BACKEND_ROOT: Path = Path(__file__).resolve().parents[1]
+
+    # SQL schema file used to (re)initialize the RAG DB.
+    SCHEMA_SQL: Path = Field(
+        default_factory=lambda: Path(__file__).resolve().parents[1]
+        / "app"
+        / "rag"
+        / "schema.sql"
+    )
+
+    # Base directory under which each per-model RAG DB lives.
+    # Example: backend/data/models/<model_id>/rag.sqlite
+    MODELS_DIR: Path = Field(
+        default_factory=lambda: Path(__file__).resolve().parents[1] / "data" / "models"
+    )
+
+    # Dev helper: fallback XML to load when none is supplied.
+    # Alias preserves older env names without breaking callers.
+    default_xml: Path | None = Field(default=None, alias="DEFAULT_XML")
+
+    # App toggles:
+    # - APP_ENV gates dev-only behavior.
+    # - LOG_LEVEL applies to both app and uvicorn (aligned in app.main).
+    # - CORS_ORIGINS should be strict in prod (no "*" with credentials).
+    APP_ENV: Literal["dev", "prod"] = "dev"
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "DEBUG"
+    ACCESS_LOG: bool = True
+    MUTE_ALL_LOGS: bool = False
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000",
+    ]
+    MAX_UPLOAD_MB: int = 200
+
+    # When True, mounts internal/debug routers (expose file paths, raw evidence).
+    # Keep False in production.
+    EXPOSE_INTERNALS: bool = False
+
+    # Generation model name as understood by the provider (Ollama/OpenAI adapters map this).
+    GEN_MODEL: str = "llama3.2:1b"
+    OLLAMA: str = "ollama"  # "ollama" (CLI) or "http://localhost:11434" (HTTP)
+    EMB_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    # Retrieval knobs; tune per model size to balance recall vs context packing.
+    RAG_TOP_K: int = 12
+    RAG_BM25_ONLY: bool = False
+    RAG_MAX_CARD_CHARS: int = 600
+    DEFAULT_MODEL_ID: str = "14b92d4a"
+
+    # Sampling and context controls; validated ranges avoid provider-side 400s.
+    # Mapped into `ollama_options` below (also used to normalize OpenAI configs).
+    LLM_TEMP: float = Field(0.2, ge=0.0, le=1.0, description="Sampling temperature")
+    LLM_TOP_P: float = Field(0.9, ge=0.0, le=1.0, description="Nucleus sampling")
+    LLM_TOP_K: int = Field(40, ge=0, description="Top-K sampling (Ollama)")
+    LLM_MAX_TOKENS: int = Field(
+        512, ge=16, le=8192, description="Max new tokens / num_predict"
+    )
+    LLM_NUM_CTX: int = Field(
+        4096, ge=512, le=32768, description="Context window for Ollama models"
+    )
+    LLM_REPEAT_PENALTY: float = Field(
+        1.1, ge=0.0, le=2.0, description="Discourage repetition (Ollama)"
+    )
+    LLM_SEED: int | None = Field(
+        None, description="Deterministic generations if supported"
+    )
+    LLM_PROVIDER: Literal["ollama", "openai"] = "ollama"  # lets us switch later
+
+    # Accept comma-separated string or list for CORS_ORIGINS; normalize to list[str].
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def _coerce_origins(cls, v: Union[str, list[str]]):
-        """Normalize origins into a list, even if provided as comma-separated string.
-
-        Example:
-            "http://a.com,http://b.com" → ["http://a.com", "http://b.com"]
-        """
+    def _coerce_origins(cls, v: str | list[str]):
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
         return v
 
+    # Convert incoming env values to Path objects (supports strings like "~/.x").
+    @field_validator("SCHEMA_SQL", "default_xml", "MODELS_DIR", mode="before")
+    @classmethod
+    def _coerce_path(cls, v: str | Path | None):
+        if v is None:
+            return None
+        return v if isinstance(v, Path) else Path(v).expanduser()
 
-# -----------------------------------------------------------------------------
-# Singleton instance
-# -----------------------------------------------------------------------------
-# Instantiated once at import so misconfiguration fails early on startup.
+    # Resolve to absolute Paths; existence is NOT checked here (creation is handled elsewhere).
+    @field_validator("SCHEMA_SQL", "default_xml", "MODELS_DIR", mode="after")
+    @classmethod
+    def _abs_path(cls, v: Path | None):
+        return None if v is None else v.resolve()
+
+    # Provider options derived from validated fields.
+    # Ensures numeric types and names match Ollama /api/generate payload.
+    @computed_field(return_type=dict)
+    def ollama_options(self) -> dict:
+        """Options map for Ollama /api/generate."""
+        opts = {
+            "temperature": self.LLM_TEMP,
+            "top_p": self.LLM_TOP_P,
+            "top_k": self.LLM_TOP_K,
+            "num_predict": self.LLM_MAX_TOKENS,
+            "num_ctx": self.LLM_NUM_CTX,
+            "repeat_penalty": self.LLM_REPEAT_PENALTY,
+        }
+        if self.LLM_SEED is not None:
+            opts["seed"] = self.LLM_SEED
+        return opts
+
+
+# Eagerly instantiate once at import; Pydantic caches env reads.
+# Import `settings` anywhere; do not re-create Settings().
 settings = Settings()

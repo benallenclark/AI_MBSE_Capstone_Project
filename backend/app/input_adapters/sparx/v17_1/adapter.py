@@ -1,95 +1,23 @@
 # ------------------------------------------------------------
 # Module: app/input_adapters/sparx/v17_1/adapter.py
-# Purpose: Sparx EA v17.1 to an in-memory SQLite adapter.
+# Purpose: Concrete adapter for Sparx EA v17.1 that provides normalized options for routing.
 # ------------------------------------------------------------
 
-"""Sparx Enterprise Architect v17.1 adapter.
-
-Summary:
-    Converts Sparx Enterprise Architect native XML exports (v17.1)
-    into an in-memory SQLite database that mirrors key `t_*` tables
-    (e.g., `t_object`, `t_connector`, `t_package`, etc.).
-
-Details:
-    - Used by the `/v1/analyze` API route through the adapter router.
-    - Provides a temporary, read-only SQLite database for deterministic
-      maturity predicates to query.
-    - Replaces the deprecated Graph-IR pipeline with SQL-backed checks.
-
-Developer Guidance:
-    - Keep parsing logic minimal—delegate XML → SQLite conversion to
-      `app.tempdb.loader.load_xml_to_mem`.
-    - Maintain statelessness: the adapter should only transform bytes into a
-      ready-to-query in-memory schema.
-    - The returned `sqlite3.Connection` must always be closed by the caller.
-    - Avoid introducing vendor-specific hacks here; handle quirks in upstream adapters.
-    - Do not implement deprecated `Graph-IR` functionality—use SQL predicates only.
-"""
-
 from __future__ import annotations
+from app.input_adapters.protocols import InputAdapter, AdapterOptions
 
-import sqlite3
-import logging
-import hashlib
-from app.input_adapters.protocols import Adapter
-from app.utils.timing import now_ns, ms_since
-from app.tempdb.loader import load_xml_to_mem
+# Defines a specific (vendor, version) adapter; values must be stable and lowercase for matching.
+# Invariant: this class should not perform I/O or DB creation—only routing/config.
+class Sparx171(InputAdapter):
+    VENDOR = "sparx"
+    VERSION = "17.1"
 
-__all__ = ("Sparx171",)
-
-log = logging.getLogger("maturity.adapter.sparx171")
-DEBUG_SHA = False
-
-class Sparx171(Adapter):
-    """Adapter for Sparx Enterprise Architect v17.1 models.
-
-    Responsibilities:
-        - Parse the native Sparx XML export.
-        - Load its tables (`t_object`, `t_connector`, etc.) into
-          a temporary in-memory SQLite database.
-        - Return a live `sqlite3.Connection` ready for predicate queries.
-
-    Notes:
-        - No files are written to disk; everything stays in RAM.
-        - This ensures high throughput and zero persistence risk.
-    """
-
-    def build_db(self, xml_bytes: bytes) -> sqlite3.Connection:
-        """Convert Sparx v17.1 native XML bytes into an in-memory SQLite DB.
-
-        Args:
-            xml_bytes (bytes): The raw XML export from Sparx Enterprise Architect.
-
-        Returns:
-            sqlite3.Connection: Connection to the populated temporary database.
-
-        Raises:
-            ValueError: If XML parsing or schema population fails.
-
-        Example:
-            >>> adapter = Sparx171()
-            >>> conn = adapter.build_db(xml_bytes)
-            >>> rows = conn.execute('SELECT COUNT(*) FROM t_object').fetchone()
-        """
-        # Parse XML and materialize t_* tables entirely in RAM
+    # Call only after `cls.matches(vendor, version)` is True.
+    # Returns adapter-scoped options; user inputs are ignored in favor of class constants.
+    @classmethod
+    def make_options(cls, vendor: str, version: str) -> AdapterOptions:
         
-        if not xml_bytes:
-            raise ValueError("empty_xml")
-        
-        t0 = now_ns()
-        try:
-            sha8 = hashlib.sha256(xml_bytes).hexdigest()[:8]
-            conn = load_xml_to_mem(xml_bytes)
-            dur_ms = ms_since(t0)
-            dur_ms_str = f"{dur_ms:.3f}" if dur_ms < 1.0 else f"{int(round(dur_ms))}"
-            log.info(
-                "timing stage=adapter vendor=sparx version=17.1 bytes=%d sha8=%s dur_ms=%s",
-                len(xml_bytes), sha8, dur_ms_str
-            )
-            return conn
-        except Exception as e:
-            log.error(
-                "adapter_build_db_failed vendor=sparx version=17.1",
-                exc_info=True,
-            )
-            raise ValueError(f"sparx171_parse_failed: {e}") from e
+        # Delegates to InputAdapter.make_options, which emits 
+        # `AdapterOptions` using `cls.VENDOR/cls.VERSION` and an empty `extra`.
+        # Safe pass-through for now; extend here later to inject Sparx-specific hints.
+        return super().make_options(vendor, version)

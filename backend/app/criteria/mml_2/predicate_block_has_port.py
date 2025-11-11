@@ -1,147 +1,145 @@
 # ------------------------------------------------------------
 # Module: app/criteria/mml_2/predicate_block_has_port.py
-# Purpose: Verify that each SysML Block element has at least one Port (MML-2).
+# Purpose: MML-2 — every Block has ≥1 Port, emit full evidence per block
+# Evidence v2: predicates return a small typed output; builder writes cards
 # ------------------------------------------------------------
-
-"""MML-2 Predicate: Verify that each Block has at least one Port.
-
-Summary:
-    Ensures every Block element defined in the model contains one or more
-    Ports. This check builds upon the MML-1 schema validation to confirm
-    structural completeness and interface definition within each Block.
-
-Behavior:
-    - Finds all rows in `t_object` where Object_Type='Class' and Stereotype='block'.
-    - Left joins potential child Port elements on ParentID.
-    - Counts Ports per Block.
-    - Reports Blocks missing Ports in the result details.
-
-Rationale:
-    A Block without Ports represents an incomplete interface specification
-    in SysML and indicates immature model structure. Ensuring every Block
-    defines at least one Port establishes interface visibility for integration.
-
-Developer Notes:
-    - Works for both native and profile-applied stereotypes (`t_xref` lookup).
-    - Keep queries adapter-agnostic and SQLite-compatible.
-    - Future maturity levels may refine port type checks (e.g., FlowPort only).
-"""
-
-from typing import Tuple, Dict, Any, TypedDict, List, cast, NotRequired
+from __future__ import annotations
 from app.criteria.protocols import Context, DbLike
+from typing import Dict, Any, List
+from app.criteria.utils import predicate
 
-PREDICATE_ID = "block_has_port"
 
-class BlockRec(TypedDict):
-    block_id: int
-    block_guid: str
-    block_name: str
-    port_count: int
 
-class Counts(TypedDict):
-    passed: int
-    failed: int
-
-class Evidence(TypedDict):
-    passed: List[BlockRec]
-    failed: List[BlockRec]
-    truncated: NotRequired[Dict[str, bool]]  # e.g., {"passed": True, "failed": False}
-
-class Details(TypedDict):
-    vendor: str
-    version: str
-    blocks_total: int
-    blocks_with_ports: int
-    blocks_missing_ports: int
-    counts: Counts
-    evidence: Evidence
-    capabilities: Dict[str, bool]
-
-# ---- column resolution ----
-
+# ---------- column helpers (adapter-agnostic) ----------
 def _cols(db: DbLike, table: str) -> Dict[str, str]:
+    # Map lowercased name -> actual case
     cur = db.execute(f"PRAGMA table_info({table})")
-    present = {str(r[1]).lower(): str(r[1]) for r in cur.fetchall()}
-    return present  # map lower->actual
+    return {str(r[1]).lower(): str(r[1]) for r in cur.fetchall()}
 
 def _pick(present: Dict[str, str], *candidates: str) -> str:
     for c in candidates:
         if c.lower() in present:
             return present[c.lower()]
-    raise KeyError(f"none of {candidates} found")
+    raise KeyError(f"none of {candidates} found in {list(present.keys())}")
 
-# ---- evaluate ----
-
-def evaluate(db: DbLike, ctx: Context) -> Tuple[bool, Details]:
+# ---------- predicate ----------
+def _core(db: DbLike, ctx: Context) -> Dict[str, Any]:
     c_obj = _cols(db, "t_object")
-    # pick actual column spellings
+
     OBJECT_ID   = _pick(c_obj, "Object_ID", "object_id", "id")
     OBJECT_TYPE = _pick(c_obj, "Object_Type", "object_type", "type")
     NAME        = _pick(c_obj, "Name", "name")
     PARENT_ID   = _pick(c_obj, "ParentID", "parentid", "parent_id")
     STEREO      = _pick(c_obj, "Stereotype", "stereotype")
-    # optional
-    EA_GUID     = c_obj.get("ea_guid", "")  # may be missing
+    EA_GUID_COL = c_obj.get("ea_guid", "")  # optional (Sparx)
 
-    # Build SQL that works with resolved names
-    if EA_GUID:
+    # Build SQL once; DuckDB-friendly (uses COALESCE) and portable
+    if EA_GUID_COL:
         sql = f"""
         SELECT
-          b."{OBJECT_ID}"  AS block_id,
-          b."{EA_GUID}"    AS block_guid,
-          b."{NAME}"       AS block_name,
-          COUNT(p."{OBJECT_ID}") AS port_count
-        FROM t_object AS b
-        LEFT JOIN t_object AS p
-          ON p."{PARENT_ID}" = b."{OBJECT_ID}"
-         AND p."{OBJECT_TYPE}" = 'Port'
-        WHERE b."{OBJECT_TYPE}" = 'Class'
-          AND LOWER(IFNULL(b."{STEREO}",'')) = 'block'
-        GROUP BY b."{OBJECT_ID}", b."{EA_GUID}", b."{NAME}";
+          b."{OBJECT_ID}"              AS block_id,
+          b."{EA_GUID_COL}"            AS block_guid,
+          b."{NAME}"                   AS block_name,
+          p."{OBJECT_ID}"              AS port_id,
+          p."{EA_GUID_COL}"            AS port_guid,
+          p."{NAME}"                   AS port_name,
+          p."{STEREO}"                 AS port_stereotype
+        FROM t_object b
+        LEFT JOIN t_object p
+          ON p."{PARENT_ID}" = b."{OBJECT_ID}" AND p."{OBJECT_TYPE}"='Port'
+        WHERE b."{OBJECT_TYPE}"='Class'
+          AND LOWER(COALESCE(b."{STEREO}",''))='block'
+        ORDER BY LOWER(b."{NAME}"), LOWER(COALESCE(p."{NAME}",'')), b."{OBJECT_ID}", p."{OBJECT_ID}";
         """
     else:
         sql = f"""
         SELECT
-          b."{OBJECT_ID}"  AS block_id,
-          ''               AS block_guid,
-          b."{NAME}"       AS block_name,
-          COUNT(p."{OBJECT_ID}") AS port_count
-        FROM t_object AS b
-        LEFT JOIN t_object AS p
-          ON p."{PARENT_ID}" = b."{OBJECT_ID}"
-         AND p."{OBJECT_TYPE}" = 'Port'
-        WHERE b."{OBJECT_TYPE}" = 'Class'
-          AND LOWER(IFNULL(b."{STEREO}",'')) = 'block'
-        GROUP BY b."{OBJECT_ID}", b."{NAME}";
+          b."{OBJECT_ID}"              AS block_id,
+          CAST(NULL AS VARCHAR)        AS block_guid,
+          b."{NAME}"                   AS block_name,
+          p."{OBJECT_ID}"              AS port_id,
+          CAST(NULL AS VARCHAR)        AS port_guid,
+          p."{NAME}"                   AS port_name,
+          p."{STEREO}"                 AS port_stereotype
+        FROM t_object b
+        LEFT JOIN t_object p
+          ON p."{PARENT_ID}" = b."{OBJECT_ID}" AND p."{OBJECT_TYPE}"='Port'
+        WHERE b."{OBJECT_TYPE}"='Class'
+          AND LOWER(COALESCE(b."{STEREO}",''))='block'
+        ORDER BY LOWER(b."{NAME}"), LOWER(COALESCE(p."{NAME}",'')), b."{OBJECT_ID}", p."{OBJECT_ID}";
         """
 
-    cur = db.execute(sql)
-    rows: List[BlockRec] = [{
-        "block_id":   int(r[0]),
-        "block_guid": str(r[1]),
-        "block_name": str(r[2]),
-        "port_count": int(r[3]),
-    } for r in cur.fetchall()]
+    rows = db.execute(sql).fetchall()
 
-    passed_items = [r for r in rows if r["port_count"] > 0]
-    failed_items = [r for r in rows if r["port_count"] == 0]
+    # Group ports per block
+    by_block: Dict[int, Dict[str, Any]] = {}
+    for (block_id, block_guid, block_name, port_id, port_guid, port_name, port_stereo) in rows:
+        b = by_block.get(block_id)
+        if b is None:
+            b = {
+                "block_id": int(block_id),
+                "block_guid": (block_guid or "") if block_guid is not None else "",
+                "block_name": str(block_name),
+                "ports": [],
+            }
+            by_block[block_id] = b
+        if port_id is not None:
+            b["ports"].append({
+                "port_id": int(port_id),
+                "port_guid": (port_guid or "") if port_guid is not None else "",
+                "port_name": str(port_name) if port_name is not None else "",
+                "port_stereotype": str(port_stereo) if port_stereo is not None else "",
+            })
 
-    # deterministic ordering
-    def _key(r): return (r["block_name"].lower(), r["block_id"])
-    passed_sorted = sorted(passed_items, key=_key)
-    failed_sorted = sorted(failed_items, key=_key)
+    blocks_total = len(by_block)
+    blocks_with_ports = sum(1 for b in by_block.values() if len(b["ports"]) > 0)
+    blocks_missing_ports = blocks_total - blocks_with_ports
+    passed = (blocks_missing_ports == 0)
 
-    details: Details = {
-        "vendor": ctx.vendor,
-        "version": ctx.version,
-        "blocks_total": len(rows),
-        "blocks_with_ports": len(passed_sorted),
-        "blocks_missing_ports": len(failed_sorted),
-        "counts": {"passed": len(passed_sorted), "failed": len(failed_sorted)},
-        "evidence": {
-            "passed": passed_sorted,
-            "failed": failed_sorted,
-        },
-        "capabilities": {"sql": True, "per_block": True},
+    # Build facts: one per block (decorator will emit evidence)
+    facts: List[Dict[str, Any]] = []
+    for b in sorted(by_block.values(), key=lambda x: (x["block_name"].lower(), x["block_id"])):
+        has_ports = len(b["ports"]) > 0
+        facts.append({
+            "subject_type": "block",
+            "subject_id":   str(b["block_id"]),
+            "subject_name": b["block_name"],
+            "tags": ["block", "port"] + ([] if has_ports else ["missing"]),
+            "child_count": len(b["ports"]),
+            "has_issue":   (not has_ports),
+            "meta": {
+                "block_guid": b["block_guid"],
+                # Keep full port list in meta for provenance; retrieval can downselect.
+                "ports": b["ports"],
+            },
+        })
+
+    counts = {
+        "blocks_total": blocks_total,
+        "with_ports": blocks_with_ports,
+        "missing_ports": blocks_missing_ports,
     }
-    return len(failed_sorted) == 0, details
+    
+    # Universal summary for UI: ok/total/ratio
+    measure = {
+        "ok": blocks_with_ports,
+        "total": blocks_total,
+        "ratio": (blocks_with_ports / blocks_total) if blocks_total else 0.0,
+    }
+
+    # Minimal return; decorator infers mml/probe_id and emits evidence
+    return {
+        "passed": passed,
+        "counts": counts,
+        "measure": measure,
+        "facts": facts,
+        "source_tables": ["t_object"],
+    }
+
+# Export evaluate that the loader expects
+evaluate = predicate(_core)
+
+    
+
+    
+

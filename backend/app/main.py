@@ -3,91 +3,83 @@
 # Purpose: FastAPI entrypoint for the MBSE Maturity backend.
 # ------------------------------------------------------------
 
-"""FastAPI entrypoint for the MBSE Maturity backend.
-
-Summary:
-    Provides a single construction path so CLI, tests, and production share
-    the same middleware, routers, and settings.
-
-Details:
-    New contributors should start here to understand app boot and request flow.
-
-Developer Guidance:
-    - Treat this file as the canonical FastAPI app factory.
-    - Do not create ad-hoc FastAPI instances elsewhere; always call `create_app()`.
-    - Environment configuration comes from `app/core/config.py` and is injected
-      automatically via `settings`.
-    - Keep middleware, router, and logging setup centralized here to ensure
-      consistent behavior across local, test, and deployment environments.
-    - For local debugging, run this file directly (`python app/main.py`);
-      for production, invoke with `uvicorn app.main:app`.
-"""
-
 
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse
+
 from app.api.routes import router
 from app.core.config import settings
-from app.core.lifespan import lifespan
-from app.core.logging import configure_logging
+from app.core.lifespan import lifespan as _orig_lifespan
+from app.core.logging_config import configure_logging
+from app.core import paths
 
-__docformat__ = "google"  # Tell Sphinx/Napoleon to parse Google-style docstrings
+__docformat__ = "google"
+log = logging.getLogger("startup")
 
+# Lifespan wrapper:
+# - Keep this fast and deterministic (e.g., path logging).
+# - Heavy I/O or model warmups belong in background tasks, not here.
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    for k, v in paths.log_path_map().items():
+    # If these paths look wrong, fix env in app/core/config.py—do not override here.
+        log.info("path %s = %s", k, v)
+    async with _orig_lifespan(app):
+        yield
 
 def create_app() -> FastAPI:
-    """Build and configure the FastAPI app.
-
-    Returns:
-        FastAPI: Configured ASGI application.
-
-    Notes:
-        Single construction path so tests and CLI use identical setup.
-        Ensures logging, middleware, and routers are initialized consistently.
-    """
-    configure_logging()  # Ensure logging format/levels are set before app init
-
+    # Configure logging FIRST so all startup logs 
+    # (including uvicorn) share the same level/format.
+    configure_logging()
+    
+    # API surface:
+    # - docs_url is versioned (/v1/docs) for forward compatibility.
+    # - redoc disabled to reduce attack surface and maintenance.
+    # - lifespan uses our wrapper for deterministic boot logs.
     app = FastAPI(
         title=f"MBSE Maturity API ({settings.APP_ENV})",
         version="0.1.0",
-        docs_url="/v1/docs",   # Swagger UI on a versioned path
-        redoc_url=None,        # One doc UI only
-        lifespan=lifespan,     # Startup/shutdown hooks (registries, timing)
+        docs_url="/v1/docs",
+        redoc_url=None,
+        lifespan=_lifespan,
     )
-
-    # CORS: environment-driven (do not hard-code origins)
+    
+    # CORS:
+    # - With allow_credentials=True, browsers require explicit origins (no "*").
+    # - settings.CORS_ORIGINS should be strict in prod (scheme+host+port).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
-        allow_methods=["*"],   # Restrict if exposing publicly
+        allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Compose all versioned endpoints under /v1 for stable URLs
+    
+    # Public endpoints are mounted under /v1.
+    # Add /v2 side-by-side later; keep /v1 for backward compatibility.
     app.include_router(router, prefix="/v1")
 
-    # Align uvicorn loggers with app-level LOG_LEVEL
+    
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        # Keep server logs consistent with app LOG_LEVEL;
+        # handler setup lives in configure_logging().
         logging.getLogger(name).setLevel(settings.LOG_LEVEL)
-
     return app
 
-
-# ASGI app instance (imported by uvicorn)
+# Import target for process managers: "app.main:app".
+# Do not instantiate FastAPI elsewhere—always import this app.
 app = create_app()
 
-
+# Return 204 to silence automatic browser favicon requests during health checks/dev.
 @app.get("/", include_in_schema=False)
 def root() -> HTMLResponse:
-    """Return a minimal landing page with a link to interactive docs.
-
-    Returns:
-        HTMLResponse: Simple HTML page for smoke testing.
-    """
+    """Landing page with link to docs."""
     return HTMLResponse(
         "<html><body>"
         "<h1>MBSE Maturity API</h1>"
@@ -95,18 +87,12 @@ def root() -> HTMLResponse:
         "</body></html>"
     )
 
-
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon() -> Response:
-    """Return 204 to silence browser favicon requests.
-
-    Returns:
-        Response: Empty 204 response.
-    """
     return Response(status_code=204)
 
-
+# Development only. In production run: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+# reload=True uses a file watcher; avoid outside local iteration.
 if __name__ == "__main__":
-    # Local dev server; production uses a process manager
     import uvicorn
     uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
