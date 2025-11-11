@@ -6,13 +6,37 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 # Read-only dependency: this endpoint never mutates job state; only fetches rows.
-from app.core.jobs_db import get_job
+from app.core.jobs_db import JobRow, get_job
 
 # v1 jobs namespace:
 # - Mounted under /v1 in app.main.
 # - Exposes a stable, poll-friendly read endpoint for async pipelines.
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _payload(row: JobRow) -> dict:
+    """Build the exact wire shape the frontend expects."""
+    status = row.get("status") or "queued"
+    # progress is guaranteed int in JobRow; still coerce defensively
+    try:
+        progress = int(row.get("progress", 0))
+    except Exception:
+        progress = 0
+    message = row.get("message") or ""
+    timings = row.get("timings") if isinstance(row.get("timings"), dict) else None
+    return {
+        "job_id": row["id"],
+        "model_id": row["model_id"],
+        "status": status,
+        "progress": progress,
+        "message": message,
+        "timings": timings,
+        "links": {
+            "self": f"/v1/jobs/{row['id']}",
+            "result": f"/v1/models/{row['model_id']}",
+        },
+    }
 
 
 # GET /jobs/{job_id}:
@@ -36,18 +60,4 @@ def read_job(job_id: str):
         },
     )
 
-    # Response contract:
-    # - "message" may be empty; "timings" optional (dict when present).
-    # - "links.self" and "links.result" enable simple client navigation.
-    return {
-        "job_id": row["id"],
-        "model_id": row["model_id"],
-        "status": row["status"],
-        "progress": row["progress"],
-        "message": row.get("message") or "",
-        "timings": row.get("timings"),  # parsed dict if present
-        "links": {
-            "self": f"/v1/jobs/{row['id']}",
-            "result": f"/v1/models/{row['model_id']}",
-        },
-    }
+    return _payload(row)

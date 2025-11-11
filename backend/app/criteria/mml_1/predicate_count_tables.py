@@ -4,21 +4,31 @@
 # Evidence v2: predicate returns a small, typed result; EvidenceBuilder writes cards
 # ------------------------------------------------------------
 from __future__ import annotations
-from typing import Set
 
 from app.criteria.protocols import Context, DbLike
 from app.criteria.utils import predicate
 
 # Only entities common to Sparx/Cameo exports
 _EXPECTED: tuple[str, ...] = (
-    "t_package", "t_object", "t_objectconstraint", "t_objectproperties",
-    "t_attribute", "t_attributetag", "t_operation", "t_operationparams",
-    "t_connector", "t_connectortag", "t_diagram", "t_diagramobjects",
-    "t_diagramlinks", "t_xref",
+    "t_package",
+    "t_object",
+    "t_objectconstraint",
+    "t_objectproperties",
+    "t_attribute",
+    "t_attributetag",
+    "t_operation",
+    "t_operationparams",
+    "t_connector",
+    "t_connectortag",
+    "t_diagram",
+    "t_diagramobjects",
+    "t_diagramlinks",
+    "t_xref",
 )
 
+
 # DuckDB: look in information_schema.tables, include both BASE TABLE and VIEW
-def _present_tables(db: DbLike) -> Set[str]:
+def _present_tables(db: DbLike) -> set[str]:
     ph = ",".join(["?"] * len(_EXPECTED))
     sql = f"""
         SELECT table_name
@@ -28,6 +38,7 @@ def _present_tables(db: DbLike) -> Set[str]:
           AND table_type IN ('BASE TABLE','VIEW')
     """
     return {r[0] for r in db.execute(sql, _EXPECTED).fetchall()}
+
 
 def _core(db: DbLike, ctx: Context):
     """Run the MML-1 check; decorator emits Evidence v2 cards (summary-only)."""
@@ -50,7 +61,7 @@ def _core(db: DbLike, ctx: Context):
 
     missing = [t for t in _EXPECTED if t not in present]
     passed = (len(missing) == 0) and (len(nonempty) > 0)
-    
+
     # Minimal counts for the summary card (numbers only; details can go in meta later)
     counts = {
         "expected": len(_EXPECTED),
@@ -58,14 +69,13 @@ def _core(db: DbLike, ctx: Context):
         "nonempty": len(nonempty),
         "total_rows": total_rows,
     }
-    
-    # Universal summary for UI: ok/total/ratio
+
+    # Universal summary for UI: ok/total
     measure = {
         "ok": counts["nonempty"],
         "total": counts["expected"],
-        "ratio": (counts["nonempty"] / counts["expected"]) if counts["expected"] else 0.0,
     }
-    
+
     # Minimal return; decorator will infer probe/mml and emit evidence
     return {
         "passed": passed,
@@ -75,6 +85,6 @@ def _core(db: DbLike, ctx: Context):
         "source_tables": list(_EXPECTED),
     }
 
+
 # Export evaluate for the loader
 evaluate = predicate(_core)
-    

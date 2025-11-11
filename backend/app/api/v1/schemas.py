@@ -1,124 +1,143 @@
 # ------------------------------------------------------------
 # Module: app/api/v1/schemas.py
-# Purpose: /v1/models/{model_id} summary (public) + optional internals
+# Purpose: GET /v1/models/{model_id} → AnalyzeContract (final UI shape)
 # ------------------------------------------------------------
 from __future__ import annotations
-import json
-from typing import Dict
-from fastapi import APIRouter, HTTPException, Query
+
+import logging
+
+import duckdb
+from fastapi import APIRouter, HTTPException, Response
+
+from app.api.v1.models import AnalyzeContract, PredicateResult
 from app.core import paths
+from app.core.config import settings
+from app.core.jobs_db import _connect as _jobs_connect
+from app.criteria.protocols import Context
+from app.criteria.runner import run_predicates
 
-# Routers:
-# - public_router: safe, stable contract for /v1/models/*
-# - internal_router: debug-only; may expose filesystem paths (mount behind a flag)
 public_router = APIRouter()
-internal_router = APIRouter()
+log = logging.getLogger("maturity.api.models")
 
-# Public summary:
-# - Returns runner-produced summary.json verbatim.
-# - If missing, emit a minimal stub so the UI can render "pending" state.
-@public_router.get("/{model_id}")
-def model_summary(model_id: str):
-    p = paths.summary_json(model_id)
-    if not p.exists():
-        mdir = paths.model_dir(model_id)
-        if not mdir.exists():
-            raise HTTPException(status_code=404, detail="model_not_found")
-        return {
-            "schema_version": "1.0",
-            "model_id": model_id,
-            "maturity_level": None,
-            "counts": {},
-            "fingerprint": None,
-            "created_at": (mdir.stat().st_mtime_ns // 1_000_000),
-        }
 
-    # Trust runner’s whitelist: do not add more evidence fields or file paths here.
-    out = json.loads(p.read_text(encoding="utf-8")) or {}
+def _latest_job_row(model_id: str) -> dict | None:
+    con = _jobs_connect()
+    cur = con.execute(
+        "SELECT * FROM jobs WHERE model_id=? ORDER BY updated_at DESC LIMIT 1",
+        (model_id,),
+    )
+    row = cur.fetchone()
+    cols = [c[0] for c in cur.description] if cur.description else []
+    con.close()
+    return dict(zip(cols, row, strict=False)) if row else None
 
-    # IMPORTANT: Do NOT enrich with probe_id/title/ts_ms from evidence.jsonl.
-    # The runner already whitelisted per-predicate keys: id, passed, counts, summary, source_tables.
+
+def _coerce_maturity_level(level_obj) -> int:
+    """
+    Accept:
+      - int            -> 1
+      - '1/3' (str)    -> 1
+      - (1, 3)/[1, 3]  -> 1
+    """
+    if isinstance(level_obj, int):
+        return level_obj
+    if isinstance(level_obj, (tuple, list)) and level_obj:
+        return int(level_obj[0])
+    if isinstance(level_obj, str):
+        return int(level_obj.split("/", 1)[0])
+    raise ValueError(f"unsupported maturity level type: {type(level_obj).__name__}")
+
+
+def _normalize_results(
+    evidence: list, include_evidence: bool = False
+) -> list[PredicateResult]:
+    out: list[PredicateResult] = []
+    for e in evidence:
+        pid = e.predicate
+        try:
+            mml = int(pid.split(":")[0].split("_")[1])
+        except Exception:
+            mml = 0
+        # Guard & copy details; redact heavy/private fields before returning to the frontend.
+        raw_details = e.details if isinstance(getattr(e, "details", None), dict) else {}
+        details = dict(raw_details)  # shallow copy so we don't mutate the source
+        if not include_evidence:
+            # Never expose raw evidence in the model summary payload by default.
+            # (We keep it on disk for audits/RAG but do not send to the client.)
+            details.pop("evidence", None)
+            details.pop("source_tables", None)
+            details.pop("probe_id", None)
+            details.pop("mml", None)
+            details.pop("passed", None)
+            # If you want a UI hint, uncomment:
+            # details["evidence_redacted"] = True
+        out.append(
+            PredicateResult(
+                id=pid,
+                mml=mml,
+                passed=bool(e.passed),
+                details=details,
+                error=(str(e.error) if getattr(e, "error", None) else None),
+            )
+        )
     return out
 
 
-# ---------- INTERNAL/DEBUG ONLY (not mounted unless EXPOSE_INTERNALS=True) ----------
-
-# Internal: exposes absolute artifact paths for inspection.
-# - Intentionally excluded from OpenAPI; mount only behind EXPOSE_INTERNALS.
-@internal_router.get("/{model_id}/artifacts", include_in_schema=False)
-def model_artifacts(model_id: str):
-    mdir = paths.model_dir(model_id)
-    if not mdir.exists():
+@public_router.get(
+    "/{model_id}",
+    response_model=AnalyzeContract,
+    response_model_exclude_none=True,
+)
+def read_model(model_id: str, response: Response) -> AnalyzeContract:
+    model_dir = paths.model_dir(model_id)
+    if not model_dir.exists():
         raise HTTPException(status_code=404, detail="model_not_found")
-    return {
-        "model_id": model_id,
-        "artifacts": {
-            "xml":            str(paths.xml_path(model_id).as_posix()),
-            "duckdb":         str(paths.duckdb_path(model_id).as_posix()),
-            "evidence_jsonl": str(paths.evidence_jsonl(model_id).as_posix()),
-            "parquet_dir":    str(paths.parquet_dir(model_id).as_posix()),
-            "rag_sqlite":     str(paths.rag_sqlite(model_id).as_posix()),
-        },
-    }
 
-# Internal: returns up to `limit` JSONL rows from evidence (first N lines).
-# - For debugging only; evidence shape may evolve across pipeline versions.
-@internal_router.get("/{model_id}/evidence", include_in_schema=False)
-def model_evidence(model_id: str, limit: int = Query(200, ge=1, le=1000)):
-    p = paths.evidence_jsonl(model_id)
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="evidence_not_found")
-    rows = []
-    with p.open("r", encoding="utf-8") as fh:
-        for i, line in enumerate(fh):
-            if i >= limit:
-                break
-            s = line.strip()
-            if s:
-                rows.append(json.loads(s))
-    return {"model_id": model_id, "rows": rows, "limit": limit}
+    job = _latest_job_row(model_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="model_job_not_found")
 
-# Internal: latest 'summary' card per predicate (by ts_ms), with optional vendor/version filters.
-# - Supports mixed evidence shapes: prefers probe_id, falls back to metadata.group_id suffix.
-@internal_router.get("/{model_id}/summaries", include_in_schema=False)
-def model_predicate_summaries(
-    model_id: str,
-    vendor: str = Query("", description="optional vendor filter"),
-    version: str = Query("", description="optional version filter"),
-    limit: int = Query(200, ge=1, le=1000),
-):
-    """
-    Internal: latest 'doc_type=summary' card per predicate from evidence.jsonl.
-    Useful for debugging, not needed by frontend.
-    """
-    p = paths.evidence_jsonl(model_id)
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="evidence_not_found")
+    db_path = paths.duckdb_path(model_id)
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail="model_db_not_found")
 
-    # Deduplicate by predicate id; keep the most recent (max ts_ms).
-    latest_by_pid: Dict[str, dict] = {}
-    with p.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            s = line.strip()
-            if not s:
-                continue
-            j = json.loads(s)
-            if j.get("doc_type") != "summary":
-                continue
+    con = None
+    try:
+        con = duckdb.connect(str(db_path))
+        con.execute("PRAGMA enable_object_cache=true;")
+        ctx = Context(
+            vendor=str(job["vendor"]),
+            version=str(job["version"]),
+            model_dir=model_dir,
+            model_id=model_id,
+            output_root=paths.MODELS_DIR,
+        )
 
-            md = j.get("metadata") or {}
-            if vendor and md.get("vendor") != vendor:
-                continue
-            if version and md.get("version") != version:
-                continue
+        level_obj, evidence, _levels = run_predicates(con, ctx)
+        maturity_level = _coerce_maturity_level(level_obj)
 
-            pid = j.get("probe_id") or (md.get("group_id", "").split("/", 1)[-1])
-            prev = latest_by_pid.get(pid)
-            if prev is None or int(j.get("ts_ms", 0)) >= int(prev.get("ts_ms", 0)):
-                latest_by_pid[pid] = j
+        results = _normalize_results(evidence)
+        total = len(results)
+        passed = sum(1 for r in results if r.passed)
+        failed = total - passed
 
-    rows = sorted(
-        latest_by_pid.values(),
-        key=lambda r: (-int(r.get("ts_ms", 0)), r.get("probe_id", "")),
-    )[:limit]
-    return {"model_id": model_id, "rows": rows, "limit": limit}
+        return AnalyzeContract(
+            schema_version=getattr(settings, "CONTRACT_SCHEMA_VERSION", "1.0"),
+            model={"vendor": str(job["vendor"]), "version": str(job["version"])},
+            maturity_level=int(maturity_level),
+            summary={"total": int(total), "passed": int(passed), "failed": int(failed)},
+            results=results,
+        )
+
+    except ValueError as e:
+        # This is what triggers your 400; now it will be descriptive
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception:
+        log.exception("read_model_failed model_id=%s", model_id)
+        raise HTTPException(status_code=500, detail="analysis_failed")
+    finally:
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            log.warning("db_close_failed model_id=%s", model_id, exc_info=True)
