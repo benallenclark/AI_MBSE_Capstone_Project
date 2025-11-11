@@ -4,33 +4,36 @@
 # Evidence v2: predicates return a small typed output; builder writes cards
 # ------------------------------------------------------------
 from __future__ import annotations
+
+from typing import Any
+
 from app.criteria.protocols import Context, DbLike
-from typing import Dict, Any, List
 from app.criteria.utils import predicate
 
 
-
 # ---------- column helpers (adapter-agnostic) ----------
-def _cols(db: DbLike, table: str) -> Dict[str, str]:
+def _cols(db: DbLike, table: str) -> dict[str, str]:
     # Map lowercased name -> actual case
     cur = db.execute(f"PRAGMA table_info({table})")
     return {str(r[1]).lower(): str(r[1]) for r in cur.fetchall()}
 
-def _pick(present: Dict[str, str], *candidates: str) -> str:
+
+def _pick(present: dict[str, str], *candidates: str) -> str:
     for c in candidates:
         if c.lower() in present:
             return present[c.lower()]
     raise KeyError(f"none of {candidates} found in {list(present.keys())}")
 
+
 # ---------- predicate ----------
-def _core(db: DbLike, ctx: Context) -> Dict[str, Any]:
+def _core(db: DbLike, ctx: Context) -> dict[str, Any]:
     c_obj = _cols(db, "t_object")
 
-    OBJECT_ID   = _pick(c_obj, "Object_ID", "object_id", "id")
+    OBJECT_ID = _pick(c_obj, "Object_ID", "object_id", "id")
     OBJECT_TYPE = _pick(c_obj, "Object_Type", "object_type", "type")
-    NAME        = _pick(c_obj, "Name", "name")
-    PARENT_ID   = _pick(c_obj, "ParentID", "parentid", "parent_id")
-    STEREO      = _pick(c_obj, "Stereotype", "stereotype")
+    NAME = _pick(c_obj, "Name", "name")
+    PARENT_ID = _pick(c_obj, "ParentID", "parentid", "parent_id")
+    STEREO = _pick(c_obj, "Stereotype", "stereotype")
     EA_GUID_COL = c_obj.get("ea_guid", "")  # optional (Sparx)
 
     # Build SQL once; DuckDB-friendly (uses COALESCE) and portable
@@ -72,8 +75,16 @@ def _core(db: DbLike, ctx: Context) -> Dict[str, Any]:
     rows = db.execute(sql).fetchall()
 
     # Group ports per block
-    by_block: Dict[int, Dict[str, Any]] = {}
-    for (block_id, block_guid, block_name, port_id, port_guid, port_name, port_stereo) in rows:
+    by_block: dict[int, dict[str, Any]] = {}
+    for (
+        block_id,
+        block_guid,
+        block_name,
+        port_id,
+        port_guid,
+        port_name,
+        port_stereo,
+    ) in rows:
         b = by_block.get(block_id)
         if b is None:
             b = {
@@ -84,47 +95,54 @@ def _core(db: DbLike, ctx: Context) -> Dict[str, Any]:
             }
             by_block[block_id] = b
         if port_id is not None:
-            b["ports"].append({
-                "port_id": int(port_id),
-                "port_guid": (port_guid or "") if port_guid is not None else "",
-                "port_name": str(port_name) if port_name is not None else "",
-                "port_stereotype": str(port_stereo) if port_stereo is not None else "",
-            })
+            b["ports"].append(
+                {
+                    "port_id": int(port_id),
+                    "port_guid": (port_guid or "") if port_guid is not None else "",
+                    "port_name": str(port_name) if port_name is not None else "",
+                    "port_stereotype": str(port_stereo)
+                    if port_stereo is not None
+                    else "",
+                }
+            )
 
     blocks_total = len(by_block)
     blocks_with_ports = sum(1 for b in by_block.values() if len(b["ports"]) > 0)
     blocks_missing_ports = blocks_total - blocks_with_ports
-    passed = (blocks_missing_ports == 0)
+    passed = blocks_missing_ports == 0
 
     # Build facts: one per block (decorator will emit evidence)
-    facts: List[Dict[str, Any]] = []
-    for b in sorted(by_block.values(), key=lambda x: (x["block_name"].lower(), x["block_id"])):
+    facts: list[dict[str, Any]] = []
+    for b in sorted(
+        by_block.values(), key=lambda x: (x["block_name"].lower(), x["block_id"])
+    ):
         has_ports = len(b["ports"]) > 0
-        facts.append({
-            "subject_type": "block",
-            "subject_id":   str(b["block_id"]),
-            "subject_name": b["block_name"],
-            "tags": ["block", "port"] + ([] if has_ports else ["missing"]),
-            "child_count": len(b["ports"]),
-            "has_issue":   (not has_ports),
-            "meta": {
-                "block_guid": b["block_guid"],
-                # Keep full port list in meta for provenance; retrieval can downselect.
-                "ports": b["ports"],
-            },
-        })
+        facts.append(
+            {
+                "subject_type": "block",
+                "subject_id": str(b["block_id"]),
+                "subject_name": b["block_name"],
+                "tags": ["block", "port"] + ([] if has_ports else ["missing"]),
+                "child_count": len(b["ports"]),
+                "has_issue": (not has_ports),
+                "meta": {
+                    "block_guid": b["block_guid"],
+                    # Keep full port list in meta for provenance; retrieval can downselect.
+                    "ports": b["ports"],
+                },
+            }
+        )
 
     counts = {
         "blocks_total": blocks_total,
         "with_ports": blocks_with_ports,
         "missing_ports": blocks_missing_ports,
     }
-    
-    # Universal summary for UI: ok/total/ratio
+
+    # Universal summary for UI: ok/total
     measure = {
         "ok": blocks_with_ports,
         "total": blocks_total,
-        "ratio": (blocks_with_ports / blocks_total) if blocks_total else 0.0,
     }
 
     # Minimal return; decorator infers mml/probe_id and emits evidence
@@ -136,10 +154,6 @@ def _core(db: DbLike, ctx: Context) -> Dict[str, Any]:
         "source_tables": ["t_object"],
     }
 
+
 # Export evaluate that the loader expects
 evaluate = predicate(_core)
-
-    
-
-    
-

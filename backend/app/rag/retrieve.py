@@ -60,12 +60,6 @@ _STOP = {
 _token_re = re.compile(r"[a-z0-9_]+")
 
 
-# Uses PRAGMA table_info; intended for constant table/column names.
-# Do not pass untrusted identifiers here—identifiers aren’t parameterized.
-def _has_column(con: sqlite3.Connection, table: str, col: str) -> bool:
-    return any(r[1] == col for r in con.execute(f"PRAGMA table_info({table})"))
-
-
 # Lowercases, drops stopwords, limits to 8 tokens; words ≥5 chars get a trailing `*` for prefix search.
 # Returns "" for unusable queries so we fall back to summaries/recent docs.
 def _build_match(q: str) -> str:
@@ -111,22 +105,13 @@ def retrieve(
 
     con.row_factory = sqlite3.Row
 
-    # Prefers event timestamps when available; otherwise uses insertion order via rowid.
-    # Be aware: rowid tracks insert sequence, not document time.
-    try:
-        has_ts = _has_column(con, "doc", "ts_ms")
-    except Exception:
-        logger.exception("rag.retrieve.schema_check_failed")
-        con.close()
-        raise
-    order_recent = (
-        "d.ts_ms DESC" if has_ts else "d.rowid DESC"
-    )  # fallback if ts_ms absent
+    # Recency = insert order only (no timestamps by design).
+    order_recent = "d.rowid DESC"
+
     # Log begin with scope + db path (no full question to avoid noise).
     # Always inline key fields in the message so they survive any formatter.
     logger.info(
-        f"rag.retrieve.start model_id={scope.get('model_id')} vendor={scope.get('vendor')} "
-        f"version={scope.get('version')} k={k} q_len={len(question or '')} db={db_path} has_ts={int(bool(has_ts))}"
+        f"version={scope.get('version')} k={k} q_len={len(question or '')} db={db_path}"
     )
 
     # Quick scope sanity: do we have *any* docs for this (model_id, vendor, version)?
@@ -175,7 +160,7 @@ def retrieve(
         con.close()
         raise
 
-    # Pass 2: summaries (prefer recency if ts_ms exists; else rowid)
+    # Pass 2: summaries (prefer rowid)
     try:
         q2 = base_sql + f" AND d.doc_type = 'summary' ORDER BY {order_recent} LIMIT ?"
         rows = con.execute(q2, (*base_params, k)).fetchall()
