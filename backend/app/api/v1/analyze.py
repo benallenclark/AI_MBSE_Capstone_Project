@@ -1,4 +1,20 @@
-# app/api/v1/analyze.py
+# ------------------------------------------------------------
+# Module: app/api/v1/analyze.py
+# Purpose: Synchronous dev analysis and async upload→job endpoints.
+# ------------------------------------------------------------
+
+"""Expose two analysis endpoints: a dev-only synchronous analyzer and an
+async upload that schedules a background pipeline job. Keeps the controller
+thin by delegating ingest and predicate execution to services.
+
+Responsibilities
+----------------
+- Compute content-addressable IDs and persist model XML safely.
+- Run sync predicate checks and summarize results deterministically.
+- Launch background pipeline jobs from multipart uploads (202 + Location).
+- Return typed contracts and caching headers for UI diffing.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -42,12 +58,8 @@ MAX_UPLOAD_MB = settings.MAX_UPLOAD_MB
 
 paths.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-# maturity level is guaranteed int by service; no coercion needed here
 
-
-# DEV-ONLY synchronous analysis:
-# - One-shot ingest → IR → predicate run, returns results in the response.
-# - UI should use /upload (async + job polling) for large models.
+# DEV-only sync analysis endpoint: ingest → predicates → return results.
 @router.post("", response_model=AnalyzeContract, response_model_exclude_none=True)
 def analyze(req: AnalyzeRequest, response: Response) -> AnalyzeContract:
     """
@@ -101,9 +113,7 @@ def analyze(req: AnalyzeRequest, response: Response) -> AnalyzeContract:
         pass
 
 
-# Async pipeline:
-# - Accepts multipart upload; creates a job; runs the whole pipeline in the background.
-# - Returns 202 + Location:/v1/jobs/{id} for polling.
+# Async upload endpoint: persist XML, create job, start background pipeline.
 @router.post("/upload", status_code=202)
 async def analyze_upload(
     response: Response,
@@ -164,6 +174,3 @@ async def analyze_upload(
     )
     response.headers["Location"] = f"/v1/jobs/{job_id}"
     return _payload(row)
-
-
-# background job moved to services.analysis.run_pipeline_job

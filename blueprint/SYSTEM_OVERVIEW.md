@@ -18,18 +18,21 @@ It explains how the system fits together, where each part lives, and how to oper
 
 ## 3. Folder Map
 
-| Area                | Path                            | Purpose                                                   |
-| ------------------- | ------------------------------- | --------------------------------------------------------- |
-| **API**             | `backend/app/api`               | FastAPI endpoints and routers                             |
-| **Core**            | `backend/app/core`              | Config, logging, startup                                  |
-| **Criteria**        | `backend/app/criteria/mml_*`    | Maturity ladder logic (criteria per level)                |
-| **Input Adapters**  | `backend/app/input_adapters/`   | XML parsers per tool/version (`sparx/v17_1`, `cameo/...`) |
-| **RAG**             | `backend/app/rag`               | Retrieval + LLM context builder                           |
-| **Tests**           | `backend/tests`                 | Unit and integration tests                                |
-| **Contracts**       | `/contracts`                    | Shared schemas between backend and frontend               |
-| **Frontend**        | `/frontend`                     | React + Vite UI                                           |
-| **Blueprint**       | `/blueprint`                    | Diagrams + architecture docs                              |
-| **System Overview** | `/blueprint/SYSTEM_OVERVIEW.md` | You are here                                              |
+| Area                | Path                            | Purpose                                                  |
+| ------------------- | ------------------------------- | -------------------------------------------------------- |
+| **API**             | `backend/app/api`               | HTTP interface (v1 endpoints, serializers, routers).     |
+| **Core**            | `backend/app/core`              | Configuration, startup, logging, orchestrator, paths.    |
+| **Criteria**        | `backend/app/criteria/mml_*`    | Deterministic maturity rules (MML-1 → MML-N).            |
+| **Evidence**        | `backend/app/evidence`          | Evidence generation, writing, and card assembly.         |
+| **Ingest**          | `backend/app/ingest`            | XML → DuckDB pipeline; schema discovery & normalization. |
+| **Input Adapters**  | `backend/app/input_adapters/`   | Vendor-specific normalization (e.g., Sparx, Cameo).      |
+| **RAG**             | `backend/app/rag`               | Retrieval + LLM layer (FTS, prompt packing, generation). |
+| **Services**        | `backend/app/services`          | Orchestrates app workflows between core and API.         |
+| **Tests**           | `backend/tests`                 | Unit and integration tests                               |
+| **Utils**           | `backend/app/utils`             | Shared helpers (timing, hashing, logging extras).        |
+| **Frontend**        | `/frontend`                     | React + Vite UI                                          |
+| **Blueprint**       | `/blueprint`                    | Diagrams + architecture docs                             |
+| **System Overview** | `/blueprint/SYSTEM_OVERVIEW.md` | You are here                                             |
 
 ---
 
@@ -68,7 +71,7 @@ It explains how the system fits together, where each part lives, and how to oper
 **3. Install backend in editable mode**
 
 ```bash
-    pip install -e .[dev,docs]
+    pip install -e .[dev,docs,rag]
 ```
 
 **4. Run the API server**
@@ -80,23 +83,62 @@ It explains how the system fits together, where each part lives, and how to oper
 
 **5. Analyze a model and inspect output**
 
-Backend returns JSON used by the LLM and the UI. Test locally with:
+- You can test the backend by running the **frontend**, which calls the API endpoints.
 
-_PowerShell (Windows):_
+### Local LLM Setup (Ollama Installation & Verification)
 
-```powershell
-curl.exe -s -F "vendor=sparx" -F "version=17.1" `
-  -F "file=@samples\sparx\v17_1\DellSat-77_System.xml;type=application/xml" `
-  http://127.0.0.1:8000/v1/analyze/upload | python -m json.tool
+_Enable the Retrieval-Augmented Generation (RAG) layer to use a local large language model (LLM) via Ollama_
+
+**1. Download and Install Ollama**
+
+- Visit the official download page:
+  - https://ollama.com/download
+  - Choose your platform (Windows, macOS, or Linux) and install normally.
+  - After installation, open a new terminal or PowerShell window.
+
+**2. Verify Ollama Installation**
+
+```bash
+    ollama --version
 ```
 
-You can also create output.json to the backend/ folder to view the json:
+_Expected output:_
 
-```powershell
-curl.exe -s -F "vendor=sparx" -F "version=17.1" `
-  -F "file=@samples\sparx\v17_1\DellSat-77_System.xml;type=application/xml" `
-  http://127.0.0.1:8000/v1/analyze/upload | python -m json.tool | Out-file -FilePath output.json -Encoding utf8
+You should see something like: ollama version is 0.12.10
+
+**3. Check Available Models**
+
+```bash
+    ollama list
 ```
+
+If no models appear, you’ll need to download one (see next step).
+
+**4. Download the Required Model**
+
+By default, the backend expects a small, local model for reasoning (you can adjust in `app/core/config.py`):
+
+```bash
+    ollama pull llama3.2:1b
+```
+
+You can substitute `llama3.2:1b` for other models (e.g., phi3:mini, mistral, etc.) depending on your machine’s resources.
+
+**5. Verify Model Runs Correctly**
+
+Run a quick chat test:
+
+```bash
+    ollama run llama3.2:1b
+```
+
+Then type something simple like:
+
+```bash
+    > Hello!
+```
+
+If the model responds, your LLM is correctly installed and working.
 
 ### Frontend (React + TypeScript)
 
@@ -126,8 +168,10 @@ curl.exe -s -F "vendor=sparx" -F "version=17.1" `
 
 ## 5. Design Principles
 
-- One backend, one DB, one JSON - shared across API, UI, and LLM/RAG.
-- Ephemeral/Temporary storage - SQLite per run, no raw XML unless configured.
-- Criteria as code - maturity logic is transparent and traceable.
-- Evidence-driven - every conclusion links to source data.
-- LLM narrates, never judges.
+- Single Source of Truth – One backend, one database, one JSON evidence chain shared across API, UI, and RAG.
+- Deterministic Core – All maturity logic runs via transparent predicates; every result is reproducible.
+- Evidence-First – Every conclusion traces back to specific data and model elements.
+- Ephemeral by Default – Uses per-run SQLite and DuckDB; no raw XML persisted unless explicitly configured.
+- Explainable AI – The LLM narrates findings, never decides outcomes.
+- Composable Layers – Each stage (ingest → criteria → evidence → RAG) is isolated yet interoperable.
+- Human-Readable Internals – Code, data, and logs are designed to be inspectable and self-documenting.

@@ -2,12 +2,26 @@
 # Module: app/api/v1/serializers/jobs.py
 # Purpose: Shape raw job database rows into structured public API payloads.
 # ------------------------------------------------------------
+
+"""Convert database job records into public-facing API payloads.
+Ensures all fields are safe, standardized, and ready for external clients
+while maintaining consistency and defensive defaults.
+
+Responsibilities
+----------------
+- Normalize database rows into JSON-serializable job payloads.
+- Apply safe defaults for missing or malformed fields.
+- Construct canonical self/result links for job navigation.
+- Keep serialization deterministic and side-effect free.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
 
+# Convert raw DB row into clean, structured API job payload.
 def to_job_payload(row: Mapping[str, Any]) -> dict:
     """Transform a raw DB job row into a clean public API payload.
 

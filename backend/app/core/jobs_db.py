@@ -1,7 +1,23 @@
 # ------------------------------------------------------------
 # Module: app/core/jobs_db.py
-# Purpose: Lightweight SQLite-backed job store + serializers for API-facing rows.
+# Purpose: SQLite-backed job store with normalized serializers for API responses.
 # ------------------------------------------------------------
+
+"""Lightweight persistence layer for background jobs using SQLite.
+
+Responsibilities
+----------------
+- Initialize and maintain the jobs table and its indexes
+- Provide read/write helpers for creating and updating job records
+- Normalize database rows into API-facing shapes
+- Offer targeted lookups to avoid over-fetching (e.g., by sha or latest per model)
+
+Notes
+-----
+- Timestamps are milliseconds since the Unix epoch.
+- WAL mode enables concurrent readers while writers update rows.
+"""
+
 from __future__ import annotations
 
 import json
@@ -13,13 +29,19 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from app.core import paths
 
-# Wire-level status enum (public contract). Changing values is a breaking change.
+# Public, wire-level status values for jobs; changing these is a breaking change.
 JobStatus = Literal["queued", "running", "failed", "succeeded"]
 
 
-# Normalized job payload returned to API callers.
-# - timings is parsed JSON (dict); we never expose timings_json directly.
 class JobRow(TypedDict):
+    """Normalized API view of a job row with optional fields omitted when null.
+
+    Notes
+    -----
+    - `timings` is parsed from `timings_json` if present; parse failures yield None.
+    - `progress`, `created_at`, and `updated_at` are ints (ms).
+    """
+
     id: str
     sha256: str
     model_id: str
@@ -36,7 +58,13 @@ class JobRow(TypedDict):
 
 
 def _connect() -> sqlite3.Connection:
-    """Open a connection with sane PRAGMAs and dict-like row factory (no DDL)."""
+    """Open a SQLite connection with dict-like rows and sane PRAGMAs (no DDL).
+
+    Notes
+    -----
+    - Enables WAL and sets synchronous=NORMAL for better read concurrency.
+    - Uses `sqlite3.Row` so callers can access columns by name.
+    """
 
     paths.JOBS_DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(paths.JOBS_DB.as_posix(), timeout=30)
@@ -48,7 +76,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _ensure_schema(con: sqlite3.Connection) -> None:
-    """Idempotent DDL + indexes for the jobs table."""
+    """Create the jobs table and indexes if missing (idempotent)."""
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS jobs (
@@ -73,7 +101,12 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
 
 
 def ensure_initialized() -> None:
-    """Idempotent initializer for the jobs DB. Call once at app startup."""
+    """Initialize on-disk DB and schema once at app startup (idempotent).
+
+    Notes
+    -----
+    - Applies WAL/synchronous PRAGMAs at the DB level.
+    """
     paths.JOBS_DB.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(paths.JOBS_DB.as_posix(), timeout=30) as con:
         # Set PRAGMAs once; journal_mode=WAL persists at the DB level.
@@ -84,7 +117,12 @@ def ensure_initialized() -> None:
 
 
 def _row_to_jobrow(raw: Any) -> JobRow:
-    """Map a DB row (sqlite3.Row or Mapping) into a normalized JobRow."""
+    """Initialize on-disk DB and schema once at app startup (idempotent).
+
+    Notes
+    -----
+    - Applies WAL/synchronous PRAGMAs at the DB level.
+    """
     # Normalize to a plain dict so we can use .get safely.
     if isinstance(raw, sqlite3.Row):
         data = {k: raw[k] for k in raw.keys()}
@@ -119,18 +157,21 @@ def _row_to_jobrow(raw: Any) -> JobRow:
     return out
 
 
-# (hashing moved to app.utils.hashing)
-
-
-# Compact shape returned by find_succeeded_by_sha; avoids over-fetching.
 class JobLookup(TypedDict):
+    """Minimal shape for quick lookups (id, model_id, status)."""
+
     id: str
     model_id: str
     status: JobStatus
 
 
 def find_succeeded_by_sha(sha256: str, vendor: str, version: str) -> JobLookup | None:
-    """Return most recent job for (sha256, vendor, version); None if absent."""
+    """Return most recent job for (sha256, vendor, version); None if absent.
+
+    Notes
+    -----
+    - Uses `updated_at` ordering to pick the latest record.
+    """
     with _connect() as con:
         cur = con.execute(
             """
@@ -148,7 +189,13 @@ def find_succeeded_by_sha(sha256: str, vendor: str, version: str) -> JobLookup |
 
 
 def create_job(sha256: str, model_id: str, vendor: str, version: str) -> str:
-    """Insert a queued job and return its UUID. Timestamps are ms since epoch."""
+    """Insert a queued job and return its UUID.
+
+    Notes
+    -----
+    - Initial status is "queued" with progress=0.
+    - Timestamps stored as ms since epoch.
+    """
     job_id = str(uuid.uuid4())
     now = int(time.time() * 1000)
     with _connect() as con:
@@ -164,7 +211,7 @@ def create_job(sha256: str, model_id: str, vendor: str, version: str) -> str:
 
 
 def get_job(job_id: str) -> JobRow | None:
-    """Load a job by id; parses timings_json and omits NULL fields."""
+    """Load a job by id; parses timings and omits NULL fields."""
     with _connect() as con:
         cur = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,))
         row = cur.fetchone()
@@ -175,7 +222,7 @@ def get_job(job_id: str) -> JobRow | None:
 
 
 def get_latest_job(model_id: str) -> JobRow | None:
-    """Most recent job for model_id, normalized to JobRow."""
+    """Return most recent job for model_id (or None)."""
     with _connect() as con:
         cur = con.execute(
             "SELECT * FROM jobs WHERE model_id=? ORDER BY updated_at DESC LIMIT 1",
@@ -192,7 +239,14 @@ def update_status(
     message: str | None = None,
     timings: dict | None = None,
 ):
-    """Patch-style update. Always bumps updated_at; JSON-encodes timings when provided."""
+    """Patch a job's fields and bump `updated_at` (ms).
+
+    Notes
+    -----
+    - Only provided fields are modified; others remain unchanged.
+    - `timings` is JSON-encoded to `timings_json`.
+    - No error is raised if `job_id` does not exist (silent no-op).
+    """
     now = int(time.time() * 1000)
     with _connect() as con:
         sets = ["status=?", "updated_at=?"]

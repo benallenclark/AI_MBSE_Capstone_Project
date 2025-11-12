@@ -1,20 +1,34 @@
-# app/api/v1/jobs.py
+# ------------------------------------------------------------
+# Module: app/api/v1/jobs.py
+# Purpose: Expose read-only job status endpoint for async pipelines.
+# ------------------------------------------------------------
+
+"""Provide a stable, poll-friendly endpoint for job status queries.
+Jobs are immutable from this route—only retrieved and normalized for
+frontend consumption with consistent payload structure.
+
+Responsibilities
+----------------
+- Fetch job records by ID via core.jobs_db.
+- Normalize fields into a predictable, JSON-safe payload.
+- Return 404 for missing jobs and 200 for valid ones.
+- Maintain consistent field names for frontend polling.
+"""
+
 from __future__ import annotations
 
 import logging
 
 from fastapi import APIRouter, HTTPException
 
-# Read-only dependency: this endpoint never mutates job state; only fetches rows.
 from app.core.jobs_db import JobRow, get_job
 
-# v1 jobs namespace:
-# - Mounted under /v1 in app.main.
-# - Exposes a stable, poll-friendly read endpoint for async pipelines.
+# Router configuration for /v1/jobs namespace.
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+# Build normalized API payload from a raw JobRow record.
 def _payload(row: JobRow) -> dict:
     """Build the exact wire shape the frontend expects."""
     status = row.get("status") or "queued"
@@ -39,12 +53,10 @@ def _payload(row: JobRow) -> dict:
     }
 
 
-# GET /jobs/{job_id}:
-# - 200: normalized job status payload
-# - 404: unknown job_id
-# Poll-safe: no side effects; keep keys stable for frontend consumers.
+# Handle GET /v1/jobs/{job_id} to retrieve a job’s current status.
 @router.get("/{job_id}")
 def read_job(job_id: str):
+    """Retrieve and normalize job record by ID for frontend polling."""
     row = get_job(job_id)
     if not row:
         logger.warning("jobs.read not_found", extra={"job_id": job_id})

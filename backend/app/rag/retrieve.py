@@ -3,6 +3,21 @@
 # Purpose: Retrieve top-k evidence docs via FTS5 BM25 with scoped fallbacks.
 # ------------------------------------------------------------
 
+"""Query per-model RAG SQLite indexes using FTS5 with sensible fallbacks.
+
+This module provides a small retrieval pipeline:
+1) Try BM25 (FTS5) keyword search built from a normalized question.
+2) If empty, return recent summaries.
+3) If still empty, return recent in-scope docs.
+
+Responsibilities
+----------------
+- Normalize natural-language questions into compact FTS5 MATCH strings.
+- Run scoped (model_id/vendor/version) queries against `doc`/`doc_fts`.
+- Prefer relevance via bm25, then fall back to summaries or recency.
+- Log scope counts, query passes used, and basic timing details.
+"""
+
 import logging
 import re
 import sqlite3
@@ -60,9 +75,16 @@ _STOP = {
 _token_re = re.compile(r"[a-z0-9_]+")
 
 
-# Lowercases, drops stopwords, limits to 8 tokens; words ≥5 chars get a trailing `*` for prefix search.
-# Returns "" for unusable queries so we fall back to summaries/recent docs.
 def _build_match(q: str) -> str:
+    """Turn a free-text question into a compact FTS5 MATCH query string.
+
+    Notes
+    -----
+    - Lowercases, removes stopwords, keeps up to 8 tokens.
+    - Adds a trailing `*` for tokens with length ≥ 5 (prefix search).
+    - Special-cases the phrase `"missing ports"` when both terms are present.
+    - Returns an empty string when nothing useful is extracted (signals fallback).
+    """
     toks = [t for t in _token_re.findall(q.lower()) if t not in _STOP]
     if not toks:
         return ""
@@ -74,7 +96,7 @@ def _build_match(q: str) -> str:
 
 
 def _db_path(con: sqlite3.Connection) -> str:
-    """Best-effort to report the on-disk path of the main DB."""
+    """Best-effort to report the on-disk path of the main DB (for logging)."""
     try:
         # PRAGMA database_list: (seq, name, file)
         row = next(con.execute("PRAGMA database_list"), None)
@@ -85,11 +107,37 @@ def _db_path(con: sqlite3.Connection) -> str:
     return "unknown"
 
 
-# Precondition: `scope` must include {"model_id","vendor","version"}; will KeyError if missing.
-# Returns a list of dict rows; pure read-only behavior (no writes).
 def retrieve(
     question: str, scope: dict[str, str], k: int | None = None
 ) -> list[dict[str, Any]]:
+    """Return up to k scoped evidence docs using FTS5 bm25 with fallbacks.
+
+    Search Order
+    ------------
+    1) BM25 keyword search using a normalized MATCH string.
+    2) Recent summaries in scope (`doc_type='summary'`).
+    3) Most recent docs in scope (insert order via rowid).
+
+    Parameters
+    ----------
+    question : str
+        Natural-language question to search with.
+    scope : dict[str, str]
+        Must include `model_id`, `vendor`, `version`.
+    k : int | None
+        Max rows to return; defaults to `settings.RAG_TOP_K`.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        List of doc rows as plain dicts.
+
+    Notes
+    -----
+    - Read-only; never writes.
+    - Raises `FileNotFoundError` if the per-model DB is missing (via `connect()`).
+    - Requires `doc` and `doc_fts` with rowid parity (FTS5 shadow table).
+    """
     t0 = time.perf_counter()
     # Open the per-model DB; raises FileNotFoundError if the model's rag.sqlite doesn't exist yet.
     con = connect(scope)

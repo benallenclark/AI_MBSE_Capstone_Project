@@ -14,6 +14,12 @@ Responsibilities
 - Provide a consistent context manager for timing and logging operations.
 - Log start, success, and failure messages with elapsed durations.
 - Support optional contextual data in structured log output.
+
+Notes
+-----
+- Uses `time.perf_counter()` / `perf_counter_ns()` for monotonic, high-resolution timing.
+- Designed for operational observability (not benchmarking precision).
+- Safe for concurrent use in multithreaded environments.
 """
 
 from __future__ import annotations
@@ -23,28 +29,60 @@ import time
 from contextlib import contextmanager
 
 
-# Return the current high-resolution time in nanoseconds.
 def now_ns() -> int:
-    """Get the current high-resolution time in nanoseconds."""
+    """Return the current high-resolution timestamp in nanoseconds.
+
+    Notes
+    -----
+    - Based on `time.perf_counter_ns()` (monotonic and precise).
+    - Use for duration deltas, not for wall-clock time.
+    """
     return time.perf_counter_ns()
 
 
-# Compute milliseconds elapsed since a given start time in nanoseconds.
 def ms_since(t0_ns: int) -> float:
-    """Return the precise elapsed time in milliseconds since t0_ns."""
+    """Return elapsed milliseconds since the given start time (ns).
+
+    Parameters
+    ----------
+    t0_ns : int
+        Start time from `now_ns()`.
+
+    Returns
+    -------
+    float
+        Elapsed time in milliseconds.
+    """
     return (time.perf_counter_ns() - t0_ns) / 1_000_000.0
 
 
-# Context manager to log start, success, and failure messages with elapsed duration.
 @contextmanager
 def log_timer(msg: str, logger: logging.Logger | None = None, **ctx):
-    """
-    Log a start/ok/failed message with elapsed time.
-    Keeps logging consistent across modules.
+    """Context manager for timing and structured logging around a code block.
 
-    Usage:
-        with log_timer("discover-columns", xml=path):
-            ...
+    Logs start, success, and failure messages with consistent formatting and duration tracking.
+
+    Parameters
+    ----------
+    msg : str
+        Operation name or descriptive label for the timed block.
+    logger : logging.Logger | None, optional
+        Logger instance to use; defaults to module logger.
+    **ctx : dict
+        Optional key-value pairs to include in structured log output.
+
+    Example
+    -------
+    >>> with log_timer("load-model", model_id="abc123"):
+    ...     run_model_load()
+    # emits:
+    # load-model start {'model_id': 'abc123'}
+    # load-model ok in 0.382s {'model_id': 'abc123'}
+
+    Notes
+    -----
+    - Logs three stages: `start`, `ok`, and `failed`.
+    - On exception, logs the error with `exc_info=True` before re-raising.
     """
     log = logger or logging.getLogger(__name__)
     t0 = time.perf_counter()

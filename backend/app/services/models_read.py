@@ -14,6 +14,11 @@ Responsibilities
 - Coerce flexible maturity-level representations into standardized integers.
 - Execute predicate evaluations against model databases.
 - Return summarized model metadata and analysis results.
+
+Notes
+-----
+- Uses a private `_jobs_connect` helper (TODO in import).
+- `get_latest_job` relies on `zip(..., strict=False)` (requires Python ≥3.11).
 """
 
 from __future__ import annotations
@@ -30,9 +35,14 @@ from app.criteria.protocols import Context
 from app.criteria.runner import run_predicates
 
 
-# Retrieve the latest job row for a given model ID.
 def get_latest_job(model_id: str) -> dict | None:
-    """Return the latest job row for a model_id as a dict, or None."""
+    """Return the most recently updated job row for `model_id`, or None if missing.
+
+    Notes
+    -----
+    - Orders by `updated_at` descending and limits to 1.
+    - Closes the DB connection in all cases.
+    """
     con = _jobs_connect()
     try:
         cur = con.execute(
@@ -46,9 +56,19 @@ def get_latest_job(model_id: str) -> dict | None:
         con.close()
 
 
-# Convert maturity-level representations to a standard integer form.
 def _coerce_maturity_level(level_obj) -> int:
-    """Accept int / '1/3' / (1,3)/[1,3] and return the leading int."""
+    """Normalize a maturity-level value to an `int`.
+
+    Accepts these shapes:
+    - `int` → returned as-is
+    - `(1, 3)` or `[1, 3]` → returns `1`
+    - `"1/3"` → returns `1`
+
+    Raises
+    ------
+    ValueError
+        If the value type is unsupported.
+    """
     if isinstance(level_obj, int):
         return level_obj
     if isinstance(level_obj, (tuple, list)) and level_obj:
@@ -61,8 +81,17 @@ def _coerce_maturity_level(level_obj) -> int:
 # Open the model DuckDB, run predicates, and return a summarized result.
 def read_model_summary(model_id: str) -> tuple[int, list, str, str]:
     """
-    Open the model DuckDB, run predicates synchronously, and return:
-    (maturity_level:int, evidence:list[EvidenceItem], vendor:str, version:str)
+    Open the per-model DuckDB, run predicates, and return a compact summary.
+
+    Returns
+    -------
+    tuple[int, list, str, str]
+        `(maturity_level, evidence, vendor, version)`
+
+    Notes
+    -----
+    - Enables DuckDB object cache for repeated predicate runs.
+    - Pulls vendor/version from the latest job row when available.
     """
     model_dir: Path = paths.model_dir(model_id)
     db_path: Path = paths.duckdb_path(model_id)

@@ -20,7 +20,26 @@ from __future__ import annotations
 
 
 def build_prompt(question: str, cards: list[dict]) -> str:
-    """Construct a structured prompt from a question and a set of evidence cards."""
+    """Construct a structured LLM prompt from a question and evidence cards.
+
+    Parameters
+    ----------
+    question : str
+        The user's question or analytical task.
+    cards : list of dict
+        Evidence cards containing at least `doc_id`, `title`, and `body_text` or `body`.
+
+    Returns
+    -------
+    str
+        A formatted prompt ready for LLM completion.
+
+    Notes
+    -----
+    - Only the first 8 cards are included for brevity.
+    - Falls back gracefully if `title` or `body_text` is missing.
+    - Encourages concise, evidence-cited, and action-oriented answers.
+    """
     N = 8
     parts: list[str] = []
     for c in cards[:N]:
@@ -38,7 +57,23 @@ def build_prompt(question: str, cards: list[dict]) -> str:
 
 
 def simple_summarize(cards: list[dict]) -> str:
-    """Return a concise textual summary of available evidence cards."""
+    """Generate a quick summary of available evidence cards.
+
+    Parameters
+    ----------
+    cards : list of dict
+        Evidence card data, ideally including `title` fields.
+
+    Returns
+    -------
+    str
+        Human-readable summary text suitable for display or reporting.
+
+    Notes
+    -----
+    - Includes up to 5 example titles for quick orientation.
+    - Always ends with actionable MBSE improvement hints.
+    """
     titles = [c.get("title") for c in cards if c.get("title")]
     head = f"Found {len(cards)} evidence cards in scope."
     if titles:

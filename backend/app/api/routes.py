@@ -1,7 +1,20 @@
 # ------------------------------------------------------------
 # Module: app/api/routes.py
-# Purpose: Define and compose all version 1 API routers.
+# Purpose: Compose and expose all v1 FastAPI routers.
 # ------------------------------------------------------------
+
+"""Central composition root for versioned API routing.
+Mounts domain-specific sub-routers under /v1 with stable tag order so
+OpenAPI groups remain predictable across builds.
+
+Responsibilities
+----------------
+- Create the v1 APIRouter composition root.
+- Mount health, analyze, jobs, and models sub-routers with prefixes.
+- Group RAG sync/stream under a shared /rag prefix and tag.
+- Preserve deterministic inclusion order for OpenAPI tag grouping.
+"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter

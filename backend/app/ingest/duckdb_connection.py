@@ -24,16 +24,27 @@ from .errors import DuckDBError
 
 
 def open_duckdb(db_path: Path, threads: int, mem: str) -> duckdb.DuckDBPyConnection:
-    """Open a DuckDB connection with basic PRAGMAs applied."""
+    """Open a DuckDB connection with tuned PRAGMAs for performance.
+
+    Notes
+    -----
+    - Applies `threads`, `memory_limit`, and `enable_object_cache` settings.
+    - Fails gracefully if PRAGMA statements are not supported or error.
+    - Callers must close the returned connection when done.
+    """
     try:
+        # Try to open a connection to the specified DuckDB database file.
         con = duckdb.connect(str(db_path))
     except Exception as e:  # pragma: no cover
+        # Wrap low-level DuckDB errors with a custom error for clearer logs.
         raise DuckDBError(f"duckdb connect failed db='{db_path}'") from e
     try:
+        # Apply connection-level PRAGMAs for predictable performance.
         con.execute(f"PRAGMA threads={int(threads)}")
         con.execute(f"PRAGMA memory_limit='{mem}'")
         con.execute("PRAGMA enable_object_cache=true")
     except Exception:
-        # Continue with defaults if PRAGMAs fail (avoid crashing production)
+        # If any PRAGMA fails, keep the connection open with defaults.
+        # This prevents production crashes due to platform/version differences.
         pass
     return con

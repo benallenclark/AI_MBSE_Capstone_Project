@@ -35,14 +35,20 @@ def discover_columns(
     include_extensions: bool = True,
     config: SchemaConfig | None = None,
 ) -> dict[str, list[str]]:
-    """
-    Parse an XML file and return {table: [columns]}.
+    """Parse an XML file and return `{table: [columns]}`.
 
     Rules
     -----
     - `<Column name="...">` adds its name.
     - `<Extension .../>` adds prefixed attributes (if enabled).
     - Columns are sorted alphabetically for determinism.
+
+    Notes
+    -----
+    - Streams the file (memory-friendly for large XMLs).
+    - Namespace-safe tag matching via `SchemaConfig.match`.
+    - Logs warnings for missing required attributes and when no tables are seen.
+    - Extension columns are prefixed (e.g., `Extension_`) to avoid collisions.
     """
     xml_path = str(Path(xml_path))
     cfg = config or SchemaConfig()

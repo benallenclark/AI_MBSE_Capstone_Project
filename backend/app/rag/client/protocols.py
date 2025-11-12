@@ -22,10 +22,30 @@ from collections.abc import Iterable
 from typing import Protocol
 
 
-# Protocol describing the required interface for any LLM client implementation.
 class LLMClient(Protocol):
-    # Return the full generated completion for the given prompt.
+    """Protocol defining the minimal contract for any LLM client.
+
+    Implementations should provide both synchronous and streaming methods
+    for generating text completions. This enables the app to use any
+    compatible client interchangeably without binding to a specific SDK.
+    """
+
     def generate(self, prompt: str) -> str: ...
 
-    # Yield generated chunks incrementally for the given prompt.
+    """Return the full generated completion for the given prompt.
+
+    Notes
+    -----
+    - This method should block until the complete text is available.
+    - Used for standard, single-shot completions.
+    """
+
     def stream(self, prompt: str) -> Iterable[str]: ...
+
+    """Yield generated text chunks incrementally for the given prompt.
+
+    Notes
+    -----
+    - Use this for streaming responses token by token or chunk by chunk.
+    - Should yield partial strings as they become available.
+    """
