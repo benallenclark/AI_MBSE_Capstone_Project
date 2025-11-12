@@ -3,6 +3,21 @@
 # Purpose: Central, typed application settings loaded from env + backend/.env.
 # ------------------------------------------------------------
 
+"""Typed configuration hub for the application using Pydantic Settings.
+
+Responsibilities
+----------------
+- Load environment variables from an absolute backend/.env with a fixed prefix.
+- Provide strongly-typed paths, toggles, and model/provider parameters.
+- Normalize and validate incoming settings (paths, lists, numeric bounds).
+- Expose derived provider options while keeping core logic immutable.
+
+Notes
+-----
+- `.env` path is absolute; current working directory never affects loading.
+- Environment prefix is `MBSE_`; changing it is a wire-level breaking change.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,9 +30,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV_FILE = (Path(__file__).resolve().parents[1] / ".env").as_posix()
 
 
-# Single source of truth for configuration.
-# Import `settings` from this module instead of re-instantiating Settings().
 class Settings(BaseSettings):
+    """Application configuration loaded from env and validated by Pydantic.
+
+    Notes
+    -----
+    - Extras are forbidden to surface typos/unknown keys early.
+    - Paths are resolved to absolute; existence is checked elsewhere.
+    """
+
     # Env model: absolute env_file, namespaced keys, forbid extras
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,  # absolute path so CWD never matters
@@ -42,10 +63,6 @@ class Settings(BaseSettings):
     MODELS_DIR: Path = Field(
         default_factory=lambda: Path(__file__).resolve().parents[1] / "data" / "models"
     )
-
-    # Dev helper: fallback XML to load when none is supplied.
-    # Alias preserves older env names without breaking callers.
-    default_xml: Path | None = Field(default=None, alias="DEFAULT_XML")
 
     # App toggles
     APP_ENV: Literal["dev", "prod"] = "dev"
@@ -107,7 +124,7 @@ class Settings(BaseSettings):
         return v
 
     # Convert incoming env values to Path objects (supports strings like "~/.x").
-    @field_validator("SCHEMA_SQL", "default_xml", "MODELS_DIR", mode="before")
+    @field_validator("SCHEMA_SQL", "MODELS_DIR", mode="before")
     @classmethod
     def _coerce_path(cls, v: str | Path | None):
         if v is None:
@@ -115,7 +132,7 @@ class Settings(BaseSettings):
         return v if isinstance(v, Path) else Path(v).expanduser()
 
     # Resolve to absolute Paths; existence is validated elsewhere.
-    @field_validator("SCHEMA_SQL", "default_xml", "MODELS_DIR", mode="after")
+    @field_validator("SCHEMA_SQL", "MODELS_DIR", mode="after")
     @classmethod
     def _abs_path(cls, v: Path | None):
         return None if v is None else v.resolve()

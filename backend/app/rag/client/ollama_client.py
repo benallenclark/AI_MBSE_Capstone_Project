@@ -12,6 +12,11 @@ Responsibilities
 - Handle both standard and streaming text generation requests.
 - Implement graceful fallback logic for memory or missing model errors.
 - Log structured diagnostic and performance information.
+
+Notes
+-----
+- This module does not cache responses.
+- Network calls use `requests`; timeouts are conservative (see per-call timeouts below).
 """
 
 from __future__ import annotations
@@ -26,8 +31,18 @@ import requests
 from app.core.config import settings as _settings
 
 
-# Purpose: Normalize model options and ensure valid numeric values for generation parameters.
 def _sanitize(opts: dict | None, lad: logging.LoggerAdapter | None) -> dict:
+    """Normalize/validate Ollama generation options.
+
+    Ensures numeric fields are usable floats/ints, applies defaults, and bounds
+    the context window.
+
+    Notes
+    -----
+    - Defaults: temperature=0.2, top_p=0.95, num_ctx falls back to 2048.
+    - `num_ctx` is capped at 4096; values over that are reset to 2048.
+    - Logs a compact summary at DEBUG level when a logger adapter is provided.
+    """
     opts = dict(opts or {})
 
     def _as_float(k, default):
@@ -61,13 +76,18 @@ def _sanitize(opts: dict | None, lad: logging.LoggerAdapter | None) -> dict:
     return opts
 
 
-# Purpose: Ensure the base URL for Ollama is fully qualified; default to localhost if not.
 def _base_url(val: str) -> str:
+    """Return a fully-qualified Ollama base URL.
+
+    Notes
+    -----
+    - If `val` is not an HTTP(S) URL, default to `http://localhost:11434`.
+    """
     return val if val.startswith("http") else "http://localhost:11434"
 
 
-# Purpose: Detect if an error message indicates an out-of-memory or capacity-related issue.
 def _is_oom(msg: str) -> bool:
+    """Heuristically detect out-of-memory/capacity errors from a message string."""
     m = (msg or "").lower()
     return (
         ("more system memory" in m)
@@ -77,6 +97,28 @@ def _is_oom(msg: str) -> bool:
 
 
 class OllamaClient:
+    """Thin client for the Ollama API with optional fallback model support.
+
+    Parameters
+    ----------
+    base
+        Base URL for the Ollama server (e.g., "http://localhost:11434").
+    model
+        Primary model name to call.
+    fallback
+        Optional fallback model name to try on OOM/missing-model errors.
+    options
+        Generation options passed through to Ollama (already sanitized).
+    lad
+        Optional `logging.LoggerAdapter` for structured logs.
+
+    Notes
+    -----
+    - This class is stateless across calls (safe to reuse).
+    - All network errors bubble as `RuntimeError` from `generate` or as
+      warning strings yielded by `stream` (prefixed with `[warn]`).
+    """
+
     # Purpose: Initialize the Ollama client with base URL, model names, options, and logger.
     def __init__(
         self,
@@ -94,11 +136,18 @@ class OllamaClient:
             lad,
         )
 
-    # Purpose: Factory method to construct an OllamaClient instance using global settings.
     @classmethod
     def from_settings(
         cls, settings=_settings, lad: logging.LoggerAdapter | None = None
     ) -> OllamaClient:
+        """Construct an `OllamaClient` from global settings.
+
+        Notes
+        -----
+        - Requires `settings.LLM_PROVIDER == "ollama"`.
+        - Falls back to `phi3:mini` unless `FALLBACK_MODEL` is provided.
+        - Applies `_sanitize` to `settings.ollama_options`.
+        """
         if settings.LLM_PROVIDER != "ollama":
             raise RuntimeError(f"Unsupported LLM_PROVIDER={settings.LLM_PROVIDER}")
         base = _base_url(str(settings.OLLAMA))
@@ -106,8 +155,23 @@ class OllamaClient:
         opts = _sanitize(getattr(settings, "ollama_options", {}), lad)
         return cls(base, settings.GEN_MODEL, fallback, opts, lad)
 
-    # Purpose: Send a blocking generation request to Ollama and handle fallback if necessary.
     def generate(self, prompt: str) -> str:
+        """Make a blocking text generation call, with optional fallback.
+
+        Behavior
+        --------
+        - Calls `/api/generate` with `stream=false`.
+        - On non-200 responses: if the error looks like OOM/capacity and a
+          fallback model is configured, tries the fallback once.
+        - Returns the stripped response text on success.
+        - Raises `RuntimeError` with a readable message on failure.
+
+        Notes
+        -----
+        - Request timeout is 90 seconds.
+        - Logs open/close timing and status via `lad` if provided.
+        """
+
         def _call(model: str) -> tuple[bool, str]:
             t0 = time.perf_counter()
             payload = {
@@ -148,8 +212,25 @@ class OllamaClient:
             raise RuntimeError(f"[fallback failed] {resp2}")
         raise RuntimeError(resp)
 
-    # Purpose: Stream token responses from Ollama in real time, with fallback handling on errors.
     def stream(self, prompt: str) -> Iterable[str]:
+        """Stream tokens from Ollama in real time, with one-shot fallback.
+
+        Behavior
+        --------
+        - Opens a streaming connection (`stream=true`) and yields response chunks.
+        - On open failure: if the error suggests OOM or missing model and a
+          fallback is configured, attempts the fallback stream once.
+        - On fallback failure: yields a single warning line and returns.
+        - On other errors: yields a single warning line and returns.
+
+        Notes
+        -----
+        - Timeout is `(connect=5s, read=None)` for streaming.
+        - Yields only text chunks and final warnings; caller assembles output.
+        - Emits structured logs for open, first token, and done events when
+          a logger adapter is provided.
+        """
+
         def _stream(model: str):
             t0 = time.perf_counter()
             payload = {

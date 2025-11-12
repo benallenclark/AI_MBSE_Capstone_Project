@@ -2,52 +2,80 @@
 # backend/app/evidence/writer.py — Evidence v2 only
 # Purpose: Single, canonical entrypoints for emitting Evidence v2 cards.
 # ---------------------------------------------------------------------
+
+"""Emit and manage Evidence v2 card files on disk.
+
+Responsibilities
+----------------
+- Write Evidence v2 cards to `<model_dir>/evidence` as JSONL.
+- Support batch emission for multiple predicates efficiently.
+- Optionally mirror the JSONL data to Parquet for analytics.
+"""
+
 from __future__ import annotations
-from typing import Dict, Any, Iterable, List
+
 import pathlib
-from .types import PredicateOutput
+from collections.abc import Iterable
+from typing import Any
+
+import duckdb
+
 from .builder import EvidenceBuilder
+from .types import PredicateOutput
 
-# Emits Evidence v2 cards for one predicate into `<model_dir>/evidence`.
-# `ctx` = small, JSON-serializable metadata (model/vendor/version, probe info).
-# Returns the emitted card dicts so callers can log/test without rereading from disk.
-def emit_evidence(model_dir: pathlib.Path, ctx: Dict[str, Any], output: PredicateOutput) -> List[Dict[str, Any]]:
 
-    # One-off builder bound to `model_dir`; handles JSONL append and directory layout.
-    # If `output` is malformed or evidence dir missing, this may raise—caller decides retry vs. fail.
+def emit_evidence(
+    model_dir: pathlib.Path, ctx: dict[str, Any], output: PredicateOutput
+) -> list[dict[str, Any]]:
+    """Emit Evidence v2 cards for a single predicate.
+
+    Notes
+    -----
+    - Writes JSONL cards under `<model_dir>/evidence`.
+    - Returns emitted card dicts so callers can inspect or log them.
+    - May raise if `output` is malformed or directory setup fails.
+    """
+    # Create a one-time builder tied to `model_dir` (handles layout and append logic).
     return EvidenceBuilder(model_dir).emit(ctx, output)
 
-# Emits multiple predicate outputs in order (no parallelism).
-# Returns a flat list; order matches the iteration order of `outputs`.
-def emit_batch(model_dir: pathlib.Path, ctx: Dict[str, Any], outputs: Iterable[PredicateOutput]) -> List[Dict[str, Any]]:
-    
-    # Avoids reinitializing FS state/handles for each output; faster and less error-prone at scale.
+
+def emit_batch(
+    model_dir: pathlib.Path, ctx: dict[str, Any], outputs: Iterable[PredicateOutput]
+) -> list[dict[str, Any]]:
+    """Emit multiple Evidence v2 predicate outputs in sequence.
+
+    Notes
+    -----
+    - Uses a single builder for efficiency (no per-call setup).
+    - Preserves iteration order for stable logs and snapshots.
+    - Returns a flat list of all emitted card dicts.
+    """
     builder = EvidenceBuilder(model_dir)
-    docs: List[Dict[str, Any]] = []
-    
-    # Preserves iterator order, keeping logs/snapshots stable as evidence is appended to disk.
+    docs: list[dict[str, Any]] = []
+
     for out in outputs:
         docs.extend(builder.emit(ctx, out))
     return docs
 
-# Creates a columnar Parquet twin of `evidence.jsonl` for faster analytics/filters.
-# Run after emits complete; it does not track later appends.
+
 def mirror_jsonl_to_parquet(model_dir: pathlib.Path) -> pathlib.Path:
-    import duckdb
+    """Create a Parquet mirror of `evidence.jsonl` for faster analytics.
+
+    Notes
+    -----
+    - Must be run after all emits are complete (not incremental).
+    - Overwrites any existing Parquet file of the same name.
+    - Returns the path to the created Parquet file.
+    """
+
     ev_dir = model_dir / "evidence"
-    
-    # Assumes `evidence.jsonl` exists; DuckDB will error if missing.
-    # `.as_posix()` avoids Windows backslash escaping issues inside the SQL string.
     src = (ev_dir / "evidence.jsonl").as_posix()
-    
     dst = (ev_dir / f"{model_dir.name}_evidence.parquet").as_posix()
+
     con = duckdb.connect()
-    
-    # `read_json_auto` infers types; mixed shapes across cards may widen fields to STRING.
-    # Depending on DuckDB/version, COPY may overwrite `dst`—use a unique name if you need history.
-    con.execute(f"COPY (SELECT * FROM read_json_auto('{src}')) TO '{dst}' (FORMAT PARQUET);")
-    
+    con.execute(
+        f"COPY (SELECT * FROM read_json_auto('{src}')) TO '{dst}' (FORMAT PARQUET);"
+    )
     con.close()
-    
-    # Returns the Parquet path so callers can hand it directly to analytics code.
+
     return pathlib.Path(dst)

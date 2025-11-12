@@ -1,4 +1,21 @@
-# app/api/v1/rag_stream.py
+# ------------------------------------------------------------
+# Module: app/api/v1/rag_stream.py
+# Purpose: Expose a FastAPI SSE endpoint for real-time RAG LLM streaming responses
+# ------------------------------------------------------------
+
+"""
+This module provides a FastAPI endpoint that streams incremental LLM responses
+as Server-Sent Events (SSE). It serves as a thin adapter layer around the core
+RAG logic in `app.rag.service.ask_stream`.
+
+Responsibilities
+----------------
+- Parse and validate incoming POST requests for RAG queries
+- Stream tokenized model outputs using Server-Sent Events
+- Manage correlation IDs and structured logging
+- Apply proxy-safe headers to ensure real-time delivery
+"""
+
 import json
 import logging
 import uuid
@@ -6,24 +23,17 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-# Business logic lives in app.rag.service;
-# this module only frames SSE output.
 from app.rag.service import ask_stream
 
-# v1 RAG streaming namespace:
-# - Mounted under /v1 in app.main.
-# - SSE endpoint emits incremental LLM deltas.
+# Initialize router for v1 RAG streaming endpoints
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# SSE endpoint:
-# - Body: {"question": str, "model_id": str, "vendor": str, "version": str}
-# - Stream: "data: {\"delta\": "..."}" lines and a final "event: done".
-# - Keep handler async; generator itself must be sync for StreamingResponse.
+# Handle /ask_stream POST requests for real-time RAG output
 @router.post("/ask_stream")
 async def rag_ask_stream(req: Request):
-    # Parse with basic guards; return 400 on missing keys
+    # Parse request body and validate required fields
     body = await req.json()
     if "question" not in body:
         raise HTTPException(status_code=400, detail="missing 'question'")
@@ -38,8 +48,7 @@ async def rag_ask_stream(req: Request):
         extra={"cid": cid, **scope, "q_len": len(question)},
     )
 
-    # Wrap service.ask_stream() and format SSE frames.
-    # Ensure chunks are JSON-escaped; avoid long blocking work inside this loop.
+    # Generator function that wraps ask_stream() and yields SSE frames
     def sse():
         token_count = 0
         for chunk in ask_stream(question, scope, cid=cid):
@@ -50,9 +59,7 @@ async def rag_ask_stream(req: Request):
         logger.info("rag.ask_stream done", extra={"cid": cid, "tokens": token_count})
         yield "event: done\ndata: {}\n\n"
 
-    # event-stream with proxy-friendly headers:
-    # - "no-cache" prevents buffering by intermediaries
-    # - "X-Accel-Buffering: no" disables nginx buffering for real-time delivery
+    # Return streaming response with SSE headers for real-time delivery
     return StreamingResponse(
         sse(),
         media_type="text/event-stream",

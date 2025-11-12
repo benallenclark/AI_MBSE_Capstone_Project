@@ -1,38 +1,54 @@
 # ------------------------------------------------------------
 # Module: app/core/logging.py
-# Purpose: Configure unified logging for the MBSE Maturity API and its dependencies.
+# Purpose: Centralized configuration for unified logging across the MBSE API stack.
 # ------------------------------------------------------------
+
+"""Configure unified, stdout-based logging for the MBSE Maturity API.
+
+Responsibilities
+----------------
+- Initialize a single consistent logging setup at app startup.
+- Respect env-based toggles from `settings` (log level, mute, access logs).
+- Align Uvicorn’s loggers with the app-level configuration.
+- Provide Docker/K8s-friendly structured output to stdout.
+
+Notes
+-----
+- `basicConfig` is idempotent unless `force=True` (Python ≥3.8).
+- Use `settings.MUTE_ALL_LOGS` to silence all logs for CI or benchmarks.
+"""
 
 import logging
 import sys
 
-# Importing settings parses env/.env once; 
-# keep imports here to avoid circulars.
 from app.core.config import settings
 
-# Global logging setup:
-# - Call exactly once at startup; basicConfig is a no-op if handlers already exist.
-# - If tests need to reconfigure mid-run, prefer force=True or clear handlers explicitly.
-def configure_logging() -> None:
 
+def configure_logging() -> None:
+    """Initialize global logging once at startup.
+
+    Notes
+    -----
+    - Hard-mutes all logs if `MUTE_ALL_LOGS` is set.
+    - Ensures stdout formatting for container log aggregation.
+    - Keeps Uvicorn loggers aligned with app-level log level.
+    """
     # Hard mute for CI/benchmarks: disables ALL logging below CRITICAL globally.
     if settings.MUTE_ALL_LOGS:
         logging.disable(logging.CRITICAL)
         return
 
-    # Single stdout handler with uniform format; suitable for Docker/K8s aggregation.
-    # Note: basicConfig won't replace existing handlers unless force=True (Python 3.8+).
+    # Configure single stdout handler with uniform, timestamped format.
     logging.basicConfig(
         level=settings.LOG_LEVEL,  # e.g. "INFO", "DEBUG", "ERROR"
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         stream=sys.stdout,
     )
 
-    # Keep Uvicorn loggers at the same level as the app; 
-    # handlers come from basicConfig.
+    # Keep Uvicorn loggers consistent with app-level log level.
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logging.getLogger(name).setLevel(settings.LOG_LEVEL)
 
-    # Disable request-per-line access logs (useful to reduce noise in prod or tests).
+    # Optionally suppress noisy per-request access logs.
     if not settings.ACCESS_LOG:
         logging.getLogger("uvicorn.access").disabled = True

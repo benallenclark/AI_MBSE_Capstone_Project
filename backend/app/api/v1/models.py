@@ -2,6 +2,19 @@
 # Module: app/api/v1/models.py
 # Purpose: Public request/response contracts for the analysis API.
 # ------------------------------------------------------------
+
+"""Typed contracts for the MBSE Maturity API.
+Defines enums and Pydantic models for requests, evidence rows, predicate
+results, analysis responses, and job status payloads.
+
+Responsibilities
+----------------
+- Specify strict request/response schemas for /v1 endpoints.
+- Enforce validation (e.g., base64 decoding, object-shaped details).
+- Provide stable wire types with explicit enums and defaults.
+- Centralize job payload shapes for polling and navigation links.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -11,8 +24,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-# Wire enum (serialized as strings):
-# - Values are part of the public API. Changing them is a breaking change.
+# Wire enum for supported model vendors; values are part of the public API..
 class Vendor(str, Enum):
     """Supported MBSE vendors."""
 
@@ -20,16 +32,9 @@ class Vendor(str, Enum):
     cameo = "cameo"
 
 
-# JSON request for /v1/analyze (non-multipart):
-# - Use this model only for JSON uploads. Multipart uses UploadFile directly.
-# - Enforce strict contract (extra="forbid") to avoid silent field drift.
+# JSON request schema for synchronous /v1/analyze (non-multipart) uploads.
 class AnalyzeRequest(BaseModel):
-    """JSON request payload for /v1/analyze (non-multipart).
-
-    Note:
-        - For multipart uploads, FastAPI gives bytes directly (no need for this model).
-        - For JSON uploads, `xml_bytes` must be base64-encoded; we decode here.
-    """
+    """JSON request payload for /v1/analyze (non-multipart)."""
 
     # Reject unknown fields so clients can't send accidental/ignored data.
     model_config = ConfigDict(extra="forbid")
@@ -42,7 +47,7 @@ class AnalyzeRequest(BaseModel):
     # the validator below decodes to raw bytes.
     xml_bytes: bytes
 
-    # Accept bytes or base64 string; fail fast with clear errors on bad input.
+    # Decode base64 input into raw bytes for xml_bytes; fail fast on bad input.
     @field_validator("xml_bytes", mode="before")
     @classmethod
     def _b64_to_bytes(cls, v: Any) -> bytes:
@@ -56,10 +61,9 @@ class AnalyzeRequest(BaseModel):
         raise TypeError("xml_bytes must be bytes or base64 string")
 
 
-# Internal evidence row (pre-API):
-# - details must be a JSON object (not a string); keep it small & serializable.
+# Internal evidence row used pre-API; details must be a JSON object.
 class EvidenceItem(BaseModel):
-    """Single maturity predicate result (used internally and summarized for responses)."""
+    """Single maturity predicate result (internal representation)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -68,7 +72,7 @@ class EvidenceItem(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
 
-    # Guard against dumping JSON strings into "details" by mistake.
+    # Validate details to ensure an object (not a serialized JSON string).
     @field_validator("details", mode="before")
     @classmethod
     def _details_must_be_object(cls, v):
@@ -77,9 +81,7 @@ class EvidenceItem(BaseModel):
         return v
 
 
-# Public predicate result:
-# - id encodes rung + rule (e.g., "mml_2:block_has_port"); keep it stable.
-# - mml parsed from id for quick UI grouping/filtering.
+# Public-facing predicate result shape for UI consumption.
 class PredicateResult(BaseModel):
     """Flattened, response-friendly predicate row."""
 
@@ -90,31 +92,28 @@ class PredicateResult(BaseModel):
     error: str | None = None
 
 
-# ----------------------------- #
-# Public analysis response (FINAL)
-# ----------------------------- #
+# Echo the model vendor/version back to clients (for caching and display).
 class ModelEcho(BaseModel):
+    """Vendor/version echo included in analysis responses."""
+
     model_config = ConfigDict(extra="forbid")
     vendor: str
     version: str
 
 
+# Aggregate pass/fail/total counters for analysis summaries.
 class SummaryCounts(BaseModel):
+    """Pass/fail/total counts used by the UI and clients."""
+
     model_config = ConfigDict(extra="forbid")
     total: int
     passed: int
     failed: int
 
 
-# Canonical analysis response:
-# - schema_version guards wire compatibility; bump only on breaking changes.
-# - "model" carries vendor/version echo for client caching and display.
+# Canonical analysis response for model summaries and (dev) sync analysis.
 class AnalyzeContract(BaseModel):
-    """
-    Canonical response for:
-      - GET /v1/models/{model_id}
-      - (optionally) POST /v1/analyze  (sync/dev)
-    """
+    """Wire contract for GET /v1/models/{model_id} and dev POST /v1/analyze."""
 
     schema_version: str = "1.0"
     model: ModelEcho
@@ -123,28 +122,28 @@ class AnalyzeContract(BaseModel):
     results: list[PredicateResult]
 
 
-# ----------------------------- #
-# Optional: unify job wire types
-# ----------------------------- #
+# Hypermedia links associated with a job payload.
 class JobLinks(BaseModel):
+    """Canonical self/result links for job navigation."""
+
     model_config = ConfigDict(extra="forbid")
     self: str
     result: str
 
 
+# Enumerated job states; values are wire-stable and public.
 class JobStatus(str, Enum):
+    """Allowed job lifecycle statuses for polling."""
+
     queued = "queued"
     running = "running"
     failed = "failed"
     succeeded = "succeeded"
 
 
+# Canonical job status payload for upload + polling endpoints.
 class JobContract(BaseModel):
-    """
-    Canonical job payload for:
-      - POST /v1/analyze/upload (202)
-      - GET  /v1/jobs/{job_id}
-    """
+    """Wire contract for POST /v1/analyze/upload and GET /v1/jobs/{job_id}."""
 
     model_config = ConfigDict(extra="forbid")
 

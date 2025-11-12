@@ -31,53 +31,66 @@ JOBS_DB: Path = (DATA_DIR / "jobs.sqlite").resolve()
 
 # ---- Repository Paths ----
 def repo_path(p: str | Path) -> Path:
+    """Return an absolute path rooted at the repository backend.
+
+    Notes
+    -----
+    - If `p` is already absolute, it is resolved and returned unchanged.
+    - Otherwise, it is joined to BACKEND_ROOT and resolved.
+    """
     p = Path(p)
     return p.resolve() if p.is_absolute() else (BACKEND_ROOT / p).resolve()
 
 
 # ---- Per-Model Paths ----
 def model_dir(model_id: str) -> Path:
-    """Base directory for a given model."""
+    """Return the base directory for a given model (…/data/models/<id>)."""
     return (MODELS_DIR / model_id).resolve()
 
 
 def xml_path(model_id: str) -> Path:
-    """Path to model.xml for a given model."""
+    """Return the path to `model.xml` for a given model."""
     return (model_dir(model_id) / "model.xml").resolve()
 
 
 def duckdb_path(model_id: str) -> Path:
-    """Path to model.duckdb for a given model."""
+    """Return the path to `model.duckdb` for a given model."""
     return (model_dir(model_id) / "model.duckdb").resolve()
 
 
 def parquet_dir(model_id: str) -> Path:
-    """Directory for per-model parquet files."""
+    """Return the directory used for per-model parquet files."""
     return (model_dir(model_id) / "parquet").resolve()
 
 
 def evidence_dir(model_id: str) -> Path:
-    """Directory for evidence artifacts for a given model."""
+    """Return the directory used for evidence artifacts for a given model."""
     return (model_dir(model_id) / "evidence").resolve()
 
 
 def evidence_jsonl(model_id: str) -> Path:
-    """Path to evidence.jsonl under a model’s evidence directory."""
+    """Return the path to `evidence.jsonl` inside a model’s evidence directory."""
     return (evidence_dir(model_id) / "evidence.jsonl").resolve()
 
 
 def rag_sqlite(model_id: str) -> Path:
-    """Path to a model’s rag.sqlite database."""
+    """Return the path to a model’s `rag.sqlite` database."""
     return (model_dir(model_id) / "rag.sqlite").resolve()
 
 
 def summary_json(model_id: str) -> Path:
-    """Path to a model’s summary.json file."""
+    """Return the path to a model’s `summary.json` file."""
     return (model_dir(model_id) / "summary.json").resolve()
 
 
 def ensure_model_dirs(model_id: str) -> Path:
-    """Create the standard per-model directory layout"""
+    """Create (if missing) the standard per-model directory layout.
+
+    Notes
+    -----
+    - Idempotent (safe to call more than once).
+    - Ensures `<model>/`, `<model>/evidence/`, and `<model>/parquet/` exist.
+    """
     mdir = model_dir(model_id)
     mdir.mkdir(parents=True, exist_ok=True)
     evidence_dir(model_id).mkdir(parents=True, exist_ok=True)
@@ -87,7 +100,13 @@ def ensure_model_dirs(model_id: str) -> Path:
 
 # ---- Package Resources ----
 def schema_sql_text() -> str:
-    """Load schema.sql from package resources, fallback to local copy during development."""
+    """Load `schema.sql` from package resources; fall back to local copy in dev.
+
+    Notes
+    -----
+    - Returns the file contents as UTF-8 text.
+    - Fallback path is `app/rag/schema.sql` within the repo during development.
+    """
     try:
         return (_pkg_files("app.rag") / "schema.sql").read_text(encoding="utf-8")
     except Exception:
@@ -96,7 +115,13 @@ def schema_sql_text() -> str:
 
 # ---- Diagnostics ----
 def log_path_map() -> dict[str, str]:
-    """Return canonical paths snapshot for startup logging and diagnostics."""
+    """Return a snapshot of canonical paths for startup logs and diagnostics.
+
+    Notes
+    -----
+    - All values are stringified absolute paths where applicable.
+    - Useful for verifying environment/layout at boot.
+    """
     return {
         "BACKEND_ROOT": str(BACKEND_ROOT),
         "APP_ROOT": str(APP_ROOT),

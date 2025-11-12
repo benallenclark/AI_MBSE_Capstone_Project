@@ -21,15 +21,14 @@ import logging
 import sys
 from pathlib import Path
 
-from backend.app.ingest.duckdb_connection import open_duckdb
-from backend.app.ingest.duckdb_utils import (
+from app.core.config import settings
+from app.core.paths import MODELS_DIR
+from app.ingest.duckdb_connection import open_duckdb
+from app.ingest.duckdb_utils import (
     copy_jsonl_to_parquet,
     count_rows,
     create_or_replace_view,
 )
-
-from app.core.config import settings
-from app.core.paths import MODELS_DIR
 from app.ingest.jsonl_writer import write_jsonl_tables
 from app.ingest.normalize_rows import normalized_rows
 from app.ingest.types import IngestResult

@@ -3,6 +3,18 @@
 # Purpose: Pure, deterministic serialization of analysis results for API output.
 # ------------------------------------------------------------
 
+"""Normalize analysis evidence into compact API contracts and fingerprints.
+This module transforms internal `EvidenceItem` objects into public-facing
+`PredicateResult` records and computes a stable hash for change detection.
+
+Responsibilities
+----------------
+- Convert `EvidenceItem` → `PredicateResult` for the API contract.
+- Optionally redact heavy/sensitive fields from details.
+- Preserve determinism and JSON-serializability of outputs.
+- Produce an order-independent SHA-256 fingerprint for caching/dedup.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -11,18 +23,8 @@ from collections.abc import Iterable, Sequence
 
 from ..models import EvidenceItem, PredicateResult
 
-"""
-Responsibilities
-----------------
-- `normalize_results`: Convert raw `EvidenceItem` objects into `PredicateResult` contracts.
-  * Extracts MML tier from predicate IDs (graceful fallback to 0 if malformed).
-  * Optionally redacts sensitive/heavy internal fields.
-  * Ensures output is lightweight, JSON-serializable, and stable.
-- `analysis_fingerprint`: Compute a deterministic SHA-256 hash of normalized results,
-  independent of ordering — used for caching, deduplication, and change detection.
-"""
 
-
+# Transform EvidenceItem → PredicateResult for the public API contract.
 def normalize_results(
     evidence: Sequence[EvidenceItem],
     *,
@@ -69,6 +71,7 @@ def normalize_results(
     return out
 
 
+# Compute an order-independent SHA-256 fingerprint of normalized results.
 def analysis_fingerprint(results: Iterable[PredicateResult]) -> str:
     """Compute a stable, order-independent fingerprint for normalized results.
 

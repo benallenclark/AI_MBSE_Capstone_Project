@@ -2,11 +2,28 @@
 # Module: build_ir.py (minimal)
 # Purpose: Create IR views over loader tables, then build helpers.
 # ------------------------------------------------------------
+"""Build IR (views) and helper tables on top of a DuckDB loader output.
+
+Responsibilities
+----------------
+- Open a tuned DuckDB connection for build operations.
+- Create lightweight `ir.*` views that mirror `main.t_*` loader tables.
+- Materialize `irx.*` helper tables used by downstream SQL.
+- Offer a CLI to run the whole build for a given model directory.
+
+Notes
+-----
+- PRAGMA memory units are human-readable (e.g., "1GB").
+- Operations are destructive to the `ir` schema (dropped and recreated).
+- Helper table writes are idempotent (tables are replaced).
+"""
+
 from __future__ import annotations
 
 import argparse
 import logging
 from pathlib import Path
+
 import duckdb
 
 log = logging.getLogger("ingest.build_ir")
@@ -15,33 +32,43 @@ logging.basicConfig(level=logging.INFO)
 PRAGMA_THREADS = 4
 PRAGMA_MEM = "1GB"
 
-# Opens a DuckDB connection and tunes per-connection PRAGMAs (threads/memory/cache).
-# Side effect: affects performance/memory; callers MUST close the connection to release resources.
-# Size PRAGMA_MEM to your host/model or you may hit OOM or slow spills.
+
 def connect(db_path: Path) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection and apply per-connection PRAGMAs.
+
+    Notes
+    -----
+    - Tunes `threads`, `memory_limit`, and enables the object cache.
+    - Side effects: impacts performance and memory footprint for this handle.
+    - Callers MUST close the connection to release resources.
+    """
     con = duckdb.connect(str(db_path))
     con.execute(f"PRAGMA threads={PRAGMA_THREADS};")
     con.execute(f"PRAGMA memory_limit='{PRAGMA_MEM}';")
-    
-    # Caches compiled objects for speed but increases memory usage.
-    # If you rebuild schemas often (DROP/CREATE), 
-    # stale cache can cause surprises;
-    # disable when debugging memory/schema issues.
+
+    # Cache compiled objects for speed (higher memory use). Disable if debugging
+    # schema/memory issues, as stale cache can surprise during frequent DDL.
     con.execute("PRAGMA enable_object_cache=true;")
     return con
 
-# ----------------------------- #
-# Build IR = lightweight views
-# ----------------------------- #
+
 def create_ir_views(con):
-    # Nukes the entire `ir` schema (views/tables) before recreating—safe only if `ir.*` is derived.
-    # Concurrent readers of `ir.*` will see it disappear briefly; avoid running during active queries.
+    """Recreate `ir.*` views that mirror `main.t_*` loader outputs.
+
+    Drops and recreates the `ir` schema, then creates `ir.<name>` views for each
+    discovered `main.t_*` table/view. Returns a list of created view names.
+
+    Notes
+    -----
+    - Safe only if `ir.*` is fully derived (schema is dropped with CASCADE).
+    - Briefly disrupts concurrent readers of `ir.*`.
+    - Quotes identifiers to avoid issues with reserved words/special chars.
+    """
+    # Remove the entire `ir` schema before rebuilding (derived data only).
     con.execute("DROP SCHEMA IF EXISTS ir CASCADE;")
-    
     con.execute("CREATE SCHEMA IF NOT EXISTS ir;")
-    
-    # Enumerates `main` tables/views that start with `t_` (the loader’s outputs).
-    # The ESCAPE clause makes the underscore literal in LIKE. If the loader didn’t run, this returns empty.
+
+    # Discover loader outputs under `main` prefixed with `t_`.
     rows = con.execute("""
         SELECT table_name
         FROM information_schema.tables
@@ -53,20 +80,26 @@ def create_ir_views(con):
 
     created = []
     for (tbl,) in rows:
-        # Quotes each discovered table name to survive special chars/reserved words.
-        # Avoids SQL injection via metadata; do not interpolate untrusted names without quoting.
-        q = '"' + tbl.replace('"','""') + '"'
+        # Quote names to avoid collisions with reserved words/special chars.
+        q = '"' + tbl.replace('"', '""') + '"'
         con.execute(f"CREATE OR REPLACE VIEW ir.{q} AS SELECT * FROM main.{q};")
         created.append(tbl)
 
-    logging.info("IR views created for: " + (", ".join(created) if created else "(none)"))
+    logging.info(
+        "IR views created for: " + (", ".join(created) if created else "(none)")
+    )
     return created
-
 
 
 # ----------------------------- #
 # Helper tables (irx.*)
 # ----------------------------- #
+# Each entry materializes a helper table:
+# - blocks:    Block objects (filtered from t_object).
+# - ports:     Port-like objects with parent/classifier linkage.
+# - port_edges:Connector/Association edges between ports.
+# - gen_edges: Generalization parent-child edges.
+# - trace_edges:Trace/satisfy/refine/allocate edges (typed).
 HELPERS = {
     "blocks": """
         CREATE OR REPLACE TABLE irx.blocks AS
@@ -124,29 +157,42 @@ HELPERS = {
     """,
 }
 
-# Creates/overwrites materialized helper tables under `irx.*` (idempotent writes).
-# Side effects: DDL + potentially large scans; expect I/O and time on big models.
+
 def build_helpers(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """Create/overwrite materialized helper tables under `irx.*`.
+
+    Notes
+    -----
+    - Idempotent writes (tables are replaced).
+    - Builds only when required IR sources exist; otherwise creates empty shells.
+    - Performs full scans; expect I/O/time on large models.
+    - Returns row counts per helper table.
+    """
     con.execute("CREATE SCHEMA IF NOT EXISTS irx;")
 
-    # Only build helpers if required IR sources exist; otherwise create empty shells.
-    # Fast precheck via information_schema to avoid throwing on missing sources.
-    # Be aware of case sensitivity: DuckDB stores unquoted identifiers in lowercase.
+    # Fast precheck for required sources to avoid throwing on missing tables.
+    # DuckDB stores unquoted identifiers in lowercase in information_schema.
     def _table_exists(schema: str, name: str) -> bool:
-        return bool(con.execute(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema=? AND table_name=?",
-            [schema, name]
-        ).fetchone())
+        return bool(
+            con.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema=? AND table_name=?",
+                [schema, name],
+            ).fetchone()
+        )
 
     # blocks/ports need ir.t_object
     if _table_exists("ir", "t_object"):
         con.execute(HELPERS["blocks"])
         con.execute(HELPERS["ports"])
     else:
-        # Creates empty helper tables when sources are missing to keep downstream SQL running.
-        #  Useful for robustness, but can hide upstream ingest issues—log/alert on zero-row helpers in production.
-        con.execute("CREATE OR REPLACE TABLE irx.blocks (block_oid BIGINT, block_guid TEXT, block_name TEXT, block_stereotype TEXT);")
-        con.execute("CREATE OR REPLACE TABLE irx.ports (port_oid BIGINT, port_guid TEXT, port_name TEXT, parent_block_oid BIGINT, classifier_oid BIGINT, pdata1_guid TEXT, port_stereotype TEXT);")
+        # Keep downstream SQL runnable: create empty shells if sources are missing.
+        # Useful for robustness, but monitor for zero-row helpers in production.
+        con.execute(
+            "CREATE OR REPLACE TABLE irx.blocks (block_oid BIGINT, block_guid TEXT, block_name TEXT, block_stereotype TEXT);"
+        )
+        con.execute(
+            "CREATE OR REPLACE TABLE irx.ports (port_oid BIGINT, port_guid TEXT, port_name TEXT, parent_block_oid BIGINT, classifier_oid BIGINT, pdata1_guid TEXT, port_stereotype TEXT);"
+        )
 
     # edges need ir.t_connector
     if _table_exists("ir", "t_connector"):
@@ -154,24 +200,47 @@ def build_helpers(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         con.execute(HELPERS["gen_edges"])
         con.execute(HELPERS["trace_edges"])
     else:
-        con.execute("CREATE OR REPLACE TABLE irx.port_edges (conn_oid BIGINT, src_port_oid BIGINT, dst_port_oid BIGINT, conn_type TEXT);")
-        con.execute("CREATE OR REPLACE TABLE irx.gen_edges (child_oid BIGINT, parent_oid BIGINT);")
-        con.execute("CREATE OR REPLACE TABLE irx.trace_edges (src_oid BIGINT, dst_oid BIGINT, kind TEXT);")
+        con.execute(
+            "CREATE OR REPLACE TABLE irx.port_edges (conn_oid BIGINT, src_port_oid BIGINT, dst_port_oid BIGINT, conn_type TEXT);"
+        )
+        con.execute(
+            "CREATE OR REPLACE TABLE irx.gen_edges (child_oid BIGINT, parent_oid BIGINT);"
+        )
+        con.execute(
+            "CREATE OR REPLACE TABLE irx.trace_edges (src_oid BIGINT, dst_oid BIGINT, kind TEXT);"
+        )
 
-    # quick counts
+    # Quick counts for logging/visibility.
     counts = {}
-    for t in ("irx.blocks", "irx.ports", "irx.port_edges", "irx.gen_edges", "irx.trace_edges"):
+    for t in (
+        "irx.blocks",
+        "irx.ports",
+        "irx.port_edges",
+        "irx.gen_edges",
+        "irx.trace_edges",
+    ):
         counts[t] = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
     log.info(f"helpers: {counts}")
     return counts
 
-# Preconditions: `<model_dir>/model.duckdb` must exist (built by the loader).
-# Side effects: (re)creates `ir.*` views, materializes `irx.*`, runs `ANALYZE` for optimizer stats, then closes the connection.
-# Returns the DB path; consumers can chain further queries without reopening if they manage their own handle.
+
 def build_ir(model_dir: Path) -> Path:
-    """
-    Expect: model_dir/model.duckdb (produced by loader_duckdb.py)
-    Output: ir.* (views), irx.* (materialized helper tables) in the same DB.
+    """End-to-end build: create `ir.*` views, `irx.*` helpers, then ANALYZE.
+
+    Expect
+    ------
+    `<model_dir>/model.duckdb` must exist (produced by the loader).
+
+    Output
+    ------
+    - `ir.*` views mirroring `main.t_*`
+    - `irx.*` materialized helper tables in the same DB
+    - Returns the DB path after closing the connection
+
+    Notes
+    -----
+    - Runs `ANALYZE` to populate optimizer statistics.
+    - Closes the connection before returning.
     """
     db_path = model_dir / "model.duckdb"
     if not db_path.exists():
@@ -180,21 +249,27 @@ def build_ir(model_dir: Path) -> Path:
     con = connect(db_path)
     created = create_ir_views(con)
     if not created:
-        log.warning("No base tables found to mirror into ir.* (did the loader create any t_* tables?)")
+        log.warning(
+            "No base tables found to mirror into ir.* (did the loader create any t_* tables?)"
+        )
     counts = build_helpers(con)
     con.execute("ANALYZE;")
     con.close()
     return db_path
 
-# ----------------------------- #
-# CLI
-# ----------------------------- #
+
 def main():
+    """CLI entrypoint: build IR for a given `--model-dir` and print the DB path."""
     ap = argparse.ArgumentParser("build-ir")
-    ap.add_argument("--model-dir", required=True, help="Directory containing model.duckdb (from loader)")
+    ap.add_argument(
+        "--model-dir",
+        required=True,
+        help="Directory containing model.duckdb (from loader)",
+    )
     args = ap.parse_args()
     p = build_ir(Path(args.model_dir).resolve())
     print(str(p))
+
 
 if __name__ == "__main__":
     main()

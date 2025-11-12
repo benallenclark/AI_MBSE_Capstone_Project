@@ -3,6 +3,21 @@
 # Purpose: Build and append Evidence v2 JSONL docs (summary + entity cards).
 # ------------------------------------------------------------
 
+"""Emit Evidence v2 documents (summary + entity cards) as newline-delimited JSON.
+
+Responsibilities
+----------------
+- Normalize predicate payloads (dict/dataclass/POJO) to a predictable mapping.
+- Write one summary document per predicate and one entity document per fact.
+- Keep per-model evidence output in `model_dir/evidence/evidence.jsonl` (append-only).
+- Provide human-friendly defaults for titles and bodies when the predicate omits them.
+
+Notes
+-----
+- Output format is JSONL (one JSON document per line), UTF-8 encoded.
+- Appends by design; callers should guard against duplicate emissions if needed.
+"""
+
 from __future__ import annotations
 
 import json
@@ -10,13 +25,19 @@ import pathlib
 from typing import Any
 
 
-# Normalize "mml_N:rule" → "mml_N.rule" (storage/display convention).
 def _norm_probe_id(pid: str) -> str:
+    """Normalize probe IDs to storage/display form.
+
+    Converts "mml_N:rule" → "mml_N.rule" and trims whitespace.
+    """
     return (pid or "").replace(":", ".").strip()
 
 
-# Support both dict and @dataclass inputs without importing dataclasses at module load.
 def _is_dataclass_instance(obj) -> bool:
+    """Return True if `obj` is a dataclass instance.
+
+    Deferred import keeps module load light when dataclasses aren’t used.
+    """
     try:
         from dataclasses import is_dataclass
 
@@ -25,9 +46,12 @@ def _is_dataclass_instance(obj) -> bool:
         return False
 
 
-# Convert dict/dataclass/POJO to a narrow dict of allowed predicate fields.
-# Avoid **-spreads to keep the shape predictable.
 def _to_mapping(obj: Any) -> dict[str, Any]:
+    """Coerce predicate output into a narrow dict of allowed fields.
+
+    Accepts dict, dataclass, or generic object with attributes and returns only
+    the expected keys (probe_id, counts, facts, etc.) to keep shape predictable.
+    """
     if isinstance(obj, dict):
         return obj
     if _is_dataclass_instance(obj):
@@ -52,8 +76,12 @@ def _to_mapping(obj: Any) -> dict[str, Any]:
     return out
 
 
-# Same pattern for per-entity facts; pull only known keys to avoid bloat.
 def _fact_to_mapping(obj: Any) -> dict[str, Any]:
+    """Coerce a per-entity fact to a compact mapping of known fields.
+
+    Accepts dict, dataclass, or attribute-bearing object. Unknown fields are
+    dropped to avoid bloat in stored documents.
+    """
     if isinstance(obj, dict):
         return obj
     if _is_dataclass_instance(obj):
@@ -77,19 +105,42 @@ def _fact_to_mapping(obj: Any) -> dict[str, Any]:
     return out
 
 
-# Emits newline-delimited JSON (JSONL) to model_dir/evidence/evidence.jsonl.
-# Directory is created idempotently on instantiation.
 class EvidenceBuilder:
-    # Ensure per-model evidence dir exists and set output path once.
+    """Append Evidence v2 JSONL documents for a single model.
+
+    Notes
+    -----
+    - Creates `model_dir/evidence/` if missing (idempotent).
+    - Writes to `evidence.jsonl` in append mode (no locking here).
+    """
+
     def __init__(self, model_dir: pathlib.Path):
+        """Initialize builder for a given `model_dir` and ensure output path exists."""
         self.model_dir = model_dir
         (self.model_dir / "evidence").mkdir(parents=True, exist_ok=True)
         self.out_path = self.model_dir / "evidence" / "evidence.jsonl"
 
-    # Accepts dict/TypedDict/dataclass; writes 1 summary card + N entity cards.
-    # Returns the list of emitted doc dicts (for caller display/tests).
     def emit(self, ctx: dict[str, Any], out: Any) -> list[dict[str, Any]]:
-        """Accepts dict/TypedDict or dataclass; emits v2 summary + entity cards."""
+        """Emit one summary + N entity documents for a predicate run.
+
+        Parameters
+        ----------
+        ctx : dict
+            Minimal provenance: requires `model_id`; may include `vendor`, `version`.
+        out : Any
+            Predicate output (dict/dataclass/POJO). Only known fields are persisted.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            The list of documents that were written (summary first, then entities).
+
+        Notes
+        -----
+        - Raises ValueError if `probe_id` is missing after normalization.
+        - `mml` is treated as an integer maturity level (0 if omitted).
+        - Side effect: appends to `evidence.jsonl` with compact separators.
+        """
         outd = _to_mapping(out)
 
         # Hard requirement: probe_id must be present after normalization.
@@ -209,6 +260,13 @@ class EvidenceBuilder:
         has_issue: bool,
         child_count,
     ):
+        """Create a short, human-friendly title for an entity document.
+
+        Notes
+        -----
+        - Special-cases `*.block_has_port` when subject_type == "block".
+        - Includes child count (if present) and a warning glyph when `has_issue` is True.
+        """
         frag: list[str] = []
         if child_count is not None:
             frag.append(f"({child_count})")
@@ -229,6 +287,17 @@ class EvidenceBuilder:
         has_issue: bool,
         child_count,
     ):
+        """Generate a compact narrative body for the entity document.
+
+        Format
+        ------
+        "Finding … Implication … Action …" with a simple rule-aware message.
+
+        Notes
+        -----
+        - Special handling for `*.block_has_port` to note port count explicitly.
+        - Keeps language generic so UIs can augment or replace this text.
+        """
         claim = ""
         if pid.endswith(".block_has_port") and subject_type == "block":
             if child_count is not None:

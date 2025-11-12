@@ -1,42 +1,49 @@
 # ------------------------------------------------------------
 # Module: app/api/v1/rag.py
-# Purpose: RAG endpoints (ask + deterministic helpers)
+# Purpose: Define REST endpoints for RAG question-answering and deterministic utilities
 # ------------------------------------------------------------
+
+"""
+This module exposes the main RAG API endpoints under the `/v1` namespace.
+It provides a standard synchronous `/ask` route for retrieving model responses
+and a deterministic `/missing-ports` helper for DB-backed diagnostics.
+
+Responsibilities
+----------------
+- Define and validate the RAG input schema
+- Delegate core logic to `app.rag.service` and `app.rag.db`
+- Handle correlation IDs and structured logging for traceability
+- Map known exceptions to appropriate HTTP error responses
+"""
+
 import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-# Keep DB helpers minimally imported here to avoid coupling;
-# complex retrieval stays in app.rag.service / app.rag.retrieve.
 from app.rag.db import missing_ports
 from app.rag.service import ask as rag_ask
 
-# v1 RAG namespace:
-# - Mounted under /v1 in app.main.
-# - Keep endpoints thin; push retrieval/LLM logic into app.rag.service.
+# Initialize router for RAG v1 endpoints
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# Request schema for RAG:
-# - `question` minimal length avoids empty FTS queries.
-# - (Scope) model_id/vendor/version must match what's in the index.
-#   Consider Vendor enum + version normalizer if drift becomes common.
+# Define request schema for RAG queries
 class AskIn(BaseModel):
+    """Schema for incoming RAG query requests."""
+
     question: str = Field(..., min_length=4)
     model_id: str
     vendor: str
     version: str
 
 
-# RAG ask:
-# - Thin wrapper over service.ask(question, scope) → returns answer/citations/meta.
-# - Map known "bad scope/index" errors to 400; let unexpected errors surface as 500.
-#   NOTE: FileExistsError is unusual here—prefer ValueError/RuntimeError from service.
+# Handle /ask POST requests for synchronous RAG Q&A
 @router.post("/ask")
 def ask(in_: AskIn, request: Request):
+    """Submit a RAG question and return the model's answer with citations and metadata."""
     cid = request.headers.get("x-correlation-id") or str(uuid.uuid4())
     scope = {"model_id": in_.model_id, "vendor": in_.vendor, "version": in_.version}
     try:
@@ -62,11 +69,9 @@ def ask(in_: AskIn, request: Request):
         raise
 
 
-# Deterministic helper:
-# - Direct DB-backed check (no LLM). Useful for UI drill-down and smoke tests.
-# - Treat as provisional API; prefer a generic predicates endpoint long-term.
-@router.post("/missing-ports")
+# Handle /missing-ports POST requests for deterministic data validation
 def api_missing_ports(in_: AskIn, request: Request):
+    """Return missing port data for a given RAG index scope (no LLM inference)."""
     cid = request.headers.get("x-correlation-id") or str(uuid.uuid4())
     scope = {"model_id": in_.model_id, "vendor": in_.vendor, "version": in_.version}
     logger.info("rag.missing_ports start", extra={"cid": cid, **scope})

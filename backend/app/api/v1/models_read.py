@@ -1,7 +1,19 @@
 # ------------------------------------------------------------
 # Module: app/api/v1/routes/models_read.py
-# Purpose: FastAPI endpoint to serve the latest analysis summary for a given model.
+# Purpose: Serve the latest analysis summary for a given model.
 # ------------------------------------------------------------
+
+"""Expose an endpoint returning the latest maturity analysis summary
+for a specific model. Verifies all dependencies exist and normalizes
+results into the `AnalyzeContract` API shape.
+
+Responsibilities
+----------------
+- Validate model directory, DuckDB file, and job existence.
+- Read persisted summary data via services.models_read.
+- Normalize evidence and compute total/pass/fail counts.
+- Return typed `AnalyzeContract` or raise structured HTTP errors.
+"""
 
 from __future__ import annotations
 
@@ -18,21 +30,8 @@ from app.services.models_read import get_latest_job, read_model_summary
 router = APIRouter()
 log = logging.getLogger("maturity.api.models")
 
-"""
-Responsibilities
-----------------
-- Validate that the model directory, DuckDB database, and at least one job exist.
-- Read the persisted summary, normalize evidence results (with redaction), and compute pass/fail counts.
-- Return an `AnalyzeContract` payload for API clients.
 
-Error Model (HTTP)
-------------------
-- 404 → Missing model assets (`model_not_found`, `model_db_not_found`, `model_job_not_found`)
-- 400 → Domain-layer `ValueError` (invalid/malformed data)
-- 500 → Unhandled errors (logged, generic "analysis_failed" returned)
-"""
-
-
+# GET /v1/models/{model_id} → latest analysis summary as AnalyzeContract.
 @router.get(
     "/{model_id}", response_model=AnalyzeContract, response_model_exclude_none=True
 )
@@ -65,8 +64,7 @@ def read_model(model_id: str, response: Response) -> AnalyzeContract:
 
     try:
         level, evidence, vendor, version = read_model_summary(model_id)
-        # GOTCHA: `normalize_results` must return objects with a boolean-like `.passed` attribute.
-        # Redaction is enforced here for clear summaries for the UI
+        # Normalize evidence into lightweight API results (redacted for UI).
         results = normalize_results(evidence, redact=True)
         total = len(results)
         passed = sum(1 for r in results if r.passed)
