@@ -5,49 +5,47 @@
 
 """FastAPI lifespan context for startup and shutdown events.
 
-Summary:
-    Provides a centralized async context manager to handle application
-    startup and teardown phases. Ensures consistent initialization and
-    cleanup of shared resources, with timing and structured logging for
-    observability.
+Responsibilities
+----------------
+- Provide a centralized async context manager for startup/shutdown phases.
+- Initialize shared resources (e.g., databases, registries, caches) at startup.
+- Release or clean up those resources at shutdown.
+- Log timings and errors for observability and operational monitoring.
 
-Details:
-    - Automatically invoked by FastAPI at app startup and shutdown.
-    - Use the startup phase for initializing global resources (e.g., DB pools,
-      registries, caches).
-    - Use the shutdown phase for releasing resources to prevent leaks.
-    - Logs durations and errors to assist with operational monitoring.
-
-Developer Guidance:
-    - Store shared objects on `app.state.<name>` for global access.
-    - Prefer async-compatible initialization; avoid blocking calls.
-    - Log all major lifecycle steps for debugging and visibility.
-    - Do not silently ignore startup/shutdown errors—fail fast and log them.
-    - Extend this file only with cross-cutting lifecycle concerns,
-      not business logic.
+Developer Guidance
+------------------
+- Attach shared objects to `app.state.<name>` for global access.
+- Prefer async-compatible initialization; avoid blocking I/O in async context.
+- Fail fast on startup errors—don’t silently ignore them.
+- Extend only for cross-cutting lifecycle concerns (not business logic).
 """
 
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
 import logging
 import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from app.core import jobs_db
 
 logger = logging.getLogger("maturity.lifespan")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage startup and shutdown phases for the FastAPI application.
+    """Manage FastAPI application startup and shutdown phases.
 
     Args:
-        app (FastAPI): The FastAPI app instance being initialized.
+        app: FastAPI application instance.
 
     Yields:
-        None: Control is yielded back to the FastAPI runtime after startup.
+        None. Control returns to FastAPI after successful startup.
 
     Behavior:
-        - Logs startup and shutdown phases with elapsed time.
-        - Use this hook to initialize or release global resources.
+        - Logs startup and shutdown with elapsed time.
+        - Initializes shared components (e.g., jobs DB, registries).
+        - Ensures schema creation for job tracking.
+        - Cleans up resources gracefully on shutdown.
 
     Example:
         >>> @asynccontextmanager
@@ -63,6 +61,8 @@ async def lifespan(app: FastAPI):
         # -----------------------------
         # Initialize shared state objects here (e.g., database pool, registry)
         logger.info("startup begin")
+        # Ensure jobs DB schema exists (idempotent, quick)
+        jobs_db.ensure_initialized()
         # app.state.db = await make_db_pool()
         # app.state.registry = await load_registry()
         logger.info("startup ok duration_ms=%.1f", (time.perf_counter() - t0) * 1000)
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
         # -----------------------------
         try:
             logger.info("shutdown begin")
-            # clean up shared resources here
+            # clean up shared resources if initialized
             # await app.state.db.close()
             logger.info("shutdown ok")
         except Exception:
