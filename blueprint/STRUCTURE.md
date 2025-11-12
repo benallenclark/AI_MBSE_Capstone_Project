@@ -7,9 +7,13 @@ backend/
 │   │   │   ├── health.py         # /v1/health (and /ready if desired)
 │   │   │   ├── jobs.py           # /v1/jobs/{id}; status/progress/timings/links
 │   │   │   ├── models.py         # Pydantic contracts (Vendor, AnalyzeRequest, responses)
-│   │   │   ├── schemas.py        # /v1/models/* (summary, artifacts, evidence)
+│   │   │   ├── models_read.py    # GET /v1/models/{id}; call service; return contract
 │   │   │   ├── rag_stream.py     # /v1/rag/ask_stream → SSE/NDJSON streaming via service.ask_stream
-│   │   │   └── rag.py            # /v1/rag/ask; retrieve → pack → LLM
+│   │   │   ├── rag.py            # /v1/rag/ask; retrieve → pack → LLM
+│   │   │   └── serializer/
+│   │   │       ├── jobs.py         # Map JobRow → public job payload; add links
+│   │   │       └── analysis.py     # Map Evidence → PredicateResult; fingerprint
+│   │   │
 │   │   └── routes.py             # Compose and register v1 routers
 │   │
 │   ├── core/
@@ -47,7 +51,14 @@ backend/
 │   ├── ingest/
 │   │   ├── build_ir.py         # Create IR views/tables in DuckDB
 │   │   ├── discover_schema.py  # Normalize XML tables/columns
-│   │   └── loader_duckdb.py    # XML → Parquet → DuckDB; compute model_id
+│   │   ├── errors.py           # Ingest exception types (I/O, DuckDB, file writes)
+│   │   ├── jsonl_writer.py     # Write per-table JSONL with LRU handle limiting
+│   │   ├── loader_duckdb.py    # XML → Parquet → DuckDB; compute model_id
+│   │   ├── normalize_rows.py   # Stream rows; fill missing columns using defaults.
+│   │   ├── duckdb_utils.py     # COPY JSONL→Parquet; create views; count rows
+│   │   ├── schema_config .py   # XML tag/attr config with namespace-safe matching.
+│   │   ├── duckdb_connection.py          # Open DuckDB connection with PRAGMAs applied
+│   │   └── types.py            # TypedDicts for ingest results and table counts
 │   │
 │   ├── input_adapters/
 │   │   ├── cameo/
@@ -64,11 +75,25 @@ backend/
 │   │   ├── db.py               # Open/query rag.sqlite (FTS5)
 │   │   ├── llm.py              # Ollama/OpenAI provider wrappers
 │   │   ├── pack.py             # Build prompt from retrieved docs
+│   │   ├── prompts.py          # Construct prompts and short summaries from cards
 │   │   ├── retrieve.py         # FTS retrieval + filters
 │   │   ├── schema.sql          # DDL for rag.sqlite
-│   │   └── service.py          # retrieve → pack → LLM → answer
+│   │   ├── service.py          # retrieve → pack → LLM → answer
+│   │   ├── types.py            # Type definitions for RAG cards, answers, citations
+│   │   └── client.py/
+│   │       ├── ollama_client.py   # Ollama HTTP client: options, streaming, fallback
+│   │       └── protocols.py/      # LLM client Protocol: generate() and stream()
+│   │
+│   │
+│   ├── services/
+│   │   ├── analysis.py         # Orchestrate: sync analyze, post-ingest, background job
+│   │   ├── jobs.py             # Persist model.xml; fetch/synthesize job rows
+│   │   └── models_read.py      # Read model: open DuckDB, build Context, run preds
+│   │
 │   │
 │   ├── utils/
+│   │   ├── hashing.py          # compute_sha256 (bytes/stream); pure helpers
+│   │   ├── logging_extras.py   # LoggerAdapter helpers: bind cid and context
 │   │   └── timing.py           # Monotonic timers & helpers
 │   │
 │   ├── main.py                 # FastAPI app factory/entrypoint
