@@ -15,6 +15,11 @@ Responsibilities
 - Call the configured LLM client (non-stream and stream) with logging and fallbacks.
 - Return answers with citations and helpful hints when retrieval is empty.
 - Capture timing/metadata for observability.
+
+Notes
+-----
+- Timing fields use milliseconds.
+- Citations include up to the first 10 cards (doc_id and title only).
 """
 
 from __future__ import annotations
@@ -36,8 +41,6 @@ from app.utils.logging_extras import log_adapter
 logger = logging.getLogger(__name__)
 
 
-# Orchestrates retrieve → prompt → LLM call. Returns {"answer", "citations", ...meta}.
-# On LLM failure, returns a warning + a deterministic summary so UX doesn’t dead-end.
 def ask(
     question: str,
     scope: dict,
@@ -47,7 +50,15 @@ def ask(
     retrieve_fn=_retrieve,
 ) -> AskResult:
     """
-    Retrieve → build prompt → call LLM (non-stream) → return full answer + citations.
+    Run a non-streaming RAG ask: retrieve cards, build a prompt, call the LLM, and
+    return the full answer with citations and metadata.
+
+    Notes
+    -----
+    - Returns a helpful hint (instead of calling the LLM) when retrieval is empty.
+    - On LLM error or empty output, returns a warning plus a deterministic summary of cards.
+    - Side effects: writes structured logs for retrieval and LLM timings (dur_ms).
+    - `retrieve_fn` can be swapped in tests; must accept (question, scope, k=...).
     """
     lad = log_adapter(logger, cid)
     t0 = time.perf_counter()
@@ -55,6 +66,7 @@ def ask(
         "retrieval.start",
         extra={**scope, "k": settings.RAG_TOP_K, "q_len": len(question)},
     )
+    # Retrieve top-K evidence cards within the provided scope.
     cards = retrieve_fn(question, scope, k=settings.RAG_TOP_K)
     lad.info(
         "retrieval.done",
@@ -63,6 +75,7 @@ def ask(
             "dur_ms": int((time.perf_counter() - t0) * 1000),
         },
     )
+    # Base metadata propagated to the response (helps downstream observability).
     meta: dict = {
         "retrieved": len(cards),
         **scope,
@@ -72,8 +85,8 @@ def ask(
 
     if not cards:
         lad.warning("retrieval.empty", extra={**scope, "q": question[:80]})
-        # Diagnostic probe: try without scope to detect scope mismatch vs empty index.
-        # Non-fatal probe to improve UX
+        # Diagnostic probe: try without scope to distinguish scope mismatch vs. empty index.
+        # This is non-fatal and only used to craft a helpful user hint.
         t_probe = time.perf_counter()
         try:
             probe_cards = retrieve_fn(question, {}, k=3)
@@ -100,10 +113,13 @@ def ask(
             **meta,
         }
 
+    # Build the final prompt from the question and retrieved cards.
     prompt = build_prompt(question, cards)
     lad.debug(
         "prompt.built", extra={"chars": len(prompt), "cards_used": min(len(cards), 8)}
     )
+
+    # Choose the client if not provided (configured via settings).
     client = client or OllamaClient.from_settings(settings, lad)
     try:
         t1 = time.perf_counter()
@@ -116,20 +132,17 @@ def ask(
             },
         )
         if not text.strip():
+            # Treat blank output as an error to trigger the deterministic fallback.
             raise RuntimeError("Empty response from LLM")
     except Exception as e:
         lad.exception("llm.answer.error")
         text = f"[warn] LLM call failed: {e}\n\n" + simple_summarize(cards)
 
+    # Limit citations to the first 10 items to keep payloads small.
     citations: list[Citation] = [
         {"doc_id": c.get("doc_id"), "title": c.get("title")} for c in cards[:10]
     ]
     return {"answer": text, "citations": citations, **meta}
-
-
-# ----------------------------- #
-# Public API: ask_stream (yields deltas)
-# ----------------------------- #
 
 
 def ask_stream(
@@ -141,10 +154,20 @@ def ask_stream(
     retrieve_fn=_retrieve,
 ) -> Generator[str, None, None]:
     """
-    Retrieve → build prompt → stream from LLM.
-    Yields text deltas (strings). Your FastAPI route can wrap this as:
-      - SSE:   yield f"data: {json.dumps({'delta': chunk})}\\n\\n"
-      - NDJSON: yield json.dumps({'delta': chunk}) + "\\n"
+    Stream deltas for a RAG ask: retrieve cards, build a prompt, and yield LLM chunks.
+
+    Notes
+    -----
+    - Yields string deltas suitable for SSE or NDJSON (see example below).
+    - On empty retrieval, yields a one-line hint instead of calling the LLM.
+    - On provider error, yields a warning line followed by a compact summary.
+    - If the provider returns no chunks, yields a deterministic summary once.
+    - Side effects: structured logs include stream=True and timings.
+
+    Example wrapping
+    ----------------
+    SSE:    yield f"data: {{'delta': chunk}}\\n\\n"
+    NDJSON: yield json.dumps({'delta': chunk}) + "\\n"
     """
     lad = log_adapter(logger, cid)
     t0 = time.perf_counter()
@@ -157,6 +180,8 @@ def ask_stream(
             "stream": True,
         },
     )
+
+    # Retrieve evidence to ground the streamed answer.
     cards = retrieve_fn(question, scope, k=settings.RAG_TOP_K)
     lad.info(
         "retrieval.done",
@@ -169,6 +194,7 @@ def ask_stream(
 
     if not cards:
         lad.warning("retrieval.empty", extra={**scope, "stream": True})
+
         # Probe (non-fatal): try without scope to provide a helpful hint.
         try:
             probe = retrieve(question, {}, k=3)
@@ -182,7 +208,7 @@ def ask_stream(
 
     prompt = build_prompt(question, cards)
 
-    # Stream tokens; if the provider fails, yield a single fallback summary
+    # Stream tokens; if the provider fails, emit a single fallback summary.
     yielded_any = False
     client = client or OllamaClient.from_settings(settings, lad)
     try:

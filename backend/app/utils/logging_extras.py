@@ -5,20 +5,44 @@
 
 """Utility for creating logger adapters that attach contextual identifiers.
 
-This module wraps standard loggers with optional correlation ID context,
-enabling traceable logs across asynchronous or multi-request flows.
+Wraps standard Python loggers with optional correlation ID context, enabling
+traceable structured logs across async or multi-request flows.
 
 Responsibilities
 ----------------
-- Provide a simple adapter to attach correlation IDs to log records.
-- Maintain compatibility with the standard Python logging API.
-- Support optional context (no CID when absent).
-- Simplify structured and contextualized logging setup.
+- Provide a simple adapter that adds correlation IDs to log records.
+- Preserve full compatibility with the standard logging API.
+- Support optional (or missing) correlation IDs gracefully.
+- Simplify structured logging setup for services and background tasks.
+
+Notes
+-----
+- Use this helper when logs need to be correlated per request or job.
+- When `cid` is None, a plain logger is returned with no extra metadata.
 """
 
 import logging
 
 
-# Create a LoggerAdapter that attaches an optional correlation ID to each log record.
 def log_adapter(logger: logging.Logger, cid: str | None) -> logging.LoggerAdapter:
+    """Return a `LoggerAdapter` that injects an optional correlation ID.
+
+    Parameters
+    ----------
+    logger : logging.Logger
+        The base logger to wrap.
+    cid : str | None
+        Correlation or context ID (e.g., request ID, job ID). If None, no extra field is added.
+
+    Returns
+    -------
+    logging.LoggerAdapter
+        A logger adapter that preserves standard logging methods but includes `cid` in `extra`.
+
+    Example
+    -------
+    >>> log = log_adapter(logging.getLogger(__name__), cid="abc123")
+    >>> log.info("starting process")
+    # emits: {"message": "starting process", "cid": "abc123"}
+    """
     return logging.LoggerAdapter(logger, extra={"cid": cid} if cid else {})

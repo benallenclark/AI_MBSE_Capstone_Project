@@ -14,6 +14,11 @@ Responsibilities
 - Compute SHA-256 digests for large file streams efficiently.
 - Avoid excessive memory use during hash computation.
 - Provide consistent hex digest output for integrity verification.
+
+Notes
+-----
+- Always returns lowercase hexadecimal digests.
+- Stream hashing reads in fixed-size chunks (default: 1 MB).
 """
 
 from __future__ import annotations
@@ -22,17 +27,36 @@ import hashlib
 from typing import BinaryIO
 
 
-# Compute SHA-256 for an in-memory bytes payload.
 def compute_sha256(data: bytes) -> str:
-    """Compute SHA-256 of a bytes payload (content-addressable key)."""
+    """Return the SHA-256 hex digest of an in-memory bytes payload.
+
+    Notes
+    -----
+    - Designed for small/medium payloads that comfortably fit in memory.
+    - Use `compute_sha256_stream` for larger files or uploads.
+    """
     return hashlib.sha256(data).hexdigest()
 
 
-# Compute SHA-256 for a file-like stream without full memory loading.
 def compute_sha256_stream(stream: BinaryIO, chunk_size: int = 1024 * 1024) -> str:
-    """
-    Compute SHA-256 of a file-like object without loading it all in memory.
-    Useful for large uploads. Caller should open in binary mode.
+    """Compute the SHA-256 digest for a binary stream efficiently.
+
+    Parameters
+    ----------
+    stream : BinaryIO
+        File-like object opened in binary mode.
+    chunk_size : int, optional
+        Number of bytes to read per iteration. Defaults to 1 MB.
+
+    Returns
+    -------
+    str
+        Lowercase hexadecimal SHA-256 digest.
+
+    Notes
+    -----
+    - Does not close the stream (caller retains responsibility).
+    - Safe for arbitrarily large files; memory use is bounded by `chunk_size`.
     """
     h = hashlib.sha256()
     for chunk in iter(lambda: stream.read(chunk_size), b""):

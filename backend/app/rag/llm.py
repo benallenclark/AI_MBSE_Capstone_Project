@@ -3,46 +3,79 @@
 # Purpose: LLM adapters (Ollama now; others can be added later)
 # ------------------------------------------------------------
 
+"""Adapters for querying LLMs, currently supporting Ollama via HTTP or local CLI.
+
+This module defines a minimal `ask_ollama()` helper that can send prompts either
+to a running Ollama server (over HTTP/S) or to a local executable, depending on
+the configured endpoint. Other backends can be added later with the same pattern.
+
+Responsibilities
+----------------
+- Send a text prompt to an Ollama-compatible endpoint or binary.
+- Return the model’s plain-text response.
+- Leave all network and process errors to be handled by the caller.
+
+Notes
+-----
+- Sensitive prompts may leave the host when using HTTP endpoints.
+- 300 s timeout applies only to HTTP; the local CLI path has no timeout.
+- Callers should handle `HTTPError`, `URLError`, and `OSError` explicitly.
+"""
+
 from __future__ import annotations
-import subprocess, json, urllib.request
+
+import json
+import subprocess
+import urllib.request
+
 from app.core.config import settings
 
-# Input: prompt text (may contain sensitive data); Output: model's response string.
-# Sends prompts either over HTTP(S) or to a local CLI—ensure this aligns with your data handling policy.
-# Errors (HTTPError, URLError, OSError) are not caught here; callers should handle failures/timeouts.
+
 def ask_ollama(prompt: str, model: str | None = None) -> str:
-    
-    # Falls back to a configured default; will fail later if that model isn't available at the endpoint/CLI.
-    # Prefer explicit `model` in call sites when reproducibility matters.
+    """Send a prompt to an Ollama model (HTTP or local CLI) and return the response text.
+
+    Parameters
+    ----------
+    prompt : str
+        The text prompt to send (may contain sensitive data).
+    model : str | None, optional
+        Model name to use; defaults to `settings.GEN_MODEL`.
+
+    Returns
+    -------
+    str
+        The model’s response text.
+
+    Notes
+    -----
+    - Chooses HTTP if `settings.OLLAMA` starts with http/https; otherwise treats it as a CLI path.
+    - For HTTP, sends JSON `{"model", "prompt", "stream": False}` to `/api/generate`.
+    - Returns an empty string if the response JSON lacks a `response` key.
+    - For CLI mode, runs `[OLLAMA_PATH, "run", model]` and returns stdout as UTF-8 text.
+    - Errors (HTTPError, URLError, OSError) are not caught here—callers must handle them.
+    """
+    # Fall back to configured default; will fail later if model isn't available at the endpoint/CLI.
     model = model or settings.GEN_MODEL
-    
-    # If this is a URL → network call; otherwise treated as a local executable path.
-    # Invariant: set one or the other, not both; misconfiguration leads to runtime errors.
     endpoint = settings.OLLAMA
-    
-    # HTTP(S) path: your prompt leaves the host. Use HTTPS in production; avoid HTTP for sensitive prompts.
-    # Server must implement Ollama’s `/api/generate` contract; mismatches will 4xx/5xx.
+
+    # HTTP(S) mode — prompt leaves host; use HTTPS for production/sensitive data.
     if endpoint.startswith("http://") or endpoint.startswith("https://"):
-        
-        # Sends JSON {"model", "prompt", "stream": False}; non-streaming responses can be large—plan for memory.
-        # Consider adding caller-controlled options (temperature, top_p) if needed for determinism.
         req = urllib.request.Request(
             endpoint.rstrip("/") + "/api/generate",
-            data=json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8"),
+            data=json.dumps({"model": model, "prompt": prompt, "stream": False}).encode(
+                "utf-8"
+            ),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        
-        # 300s hard timeout; long generations may still exceed this. Handle HTTPError/URLError at call site.
-        # Parses `.get("response","")`; nonstandard servers or error JSON may return an empty string.
+        # 300 s hard timeout; caller should handle timeouts and errors.
         with urllib.request.urlopen(req, timeout=300) as r:
             return json.loads(r.read().decode("utf-8", "ignore")).get("response", "")
-        
-    # Local CLI path: no timeout → a stuck model can hang the process; consider adding `timeout=` if reliability matters.
-    # Only stdout is returned; stderr may contain errors you’ll miss—log or surface it in failure paths.
-    out = subprocess.run([endpoint, "run", model], input=prompt.encode("utf-8"), capture_output=True)
-    
-    # Silently drops undecodable bytes; useful for robustness but can hide encoding issues.
-    # Returns raw CLI text (not JSON); keep call sites consistent with the HTTP branch’s plain string.
-    return out.stdout.decode("utf-8", errors="ignore")
 
+    # Local CLI mode — no timeout; process can hang indefinitely.
+    out = subprocess.run(
+        [endpoint, "run", model], input=prompt.encode("utf-8"), capture_output=True
+    )
+
+    # Decode output, ignoring undecodable bytes for robustness.
+    return out.stdout.decode("utf-8", errors="ignore")

@@ -3,6 +3,12 @@
 # Purpose: Open a per-model RAG SQLite DB and expose task-style queries.
 # ------------------------------------------------------------
 
+"""Helpers to locate and open a per-model RAG SQLite database.
+
+This module centralizes path resolution for the models directory and provides
+read-only query helpers (task-style) against the per-model `rag.sqlite`.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -15,9 +21,16 @@ from app.core.config import settings
 log = logging.getLogger("rag.db")
 
 
-# Precondition: `scope` must include {"model_id","vendor","version"}; `limit` should be a positive int.
-# Read-only query; no writes. Caller handles empty results as “no issues found”.
 def missing_ports(scope: dict, limit: int = 200):
+    """Return blocks that are missing required ports for the given model scope.
+
+    Notes
+    -----
+    - `scope` must include: `model_id`, `vendor`, `version`.
+    - Read-only: executes a SELECT and returns a list of plain dicts.
+    - Raises `FileNotFoundError` if the per-model DB has not been created yet.
+    - Limit should be a positive integer (default 200).
+    """
     # May raise FileNotFoundError if the RAG DB does not exist yet (pipeline not run).
     # If an exception occurs before `con.close()`, the connection may stay open—wrap in try/finally if you extend this.
     con = connect(scope)
@@ -50,10 +63,10 @@ def missing_ports(scope: dict, limit: int = 200):
 
 
 def _resolve_models_dir() -> Path:
-    """
-    Single source of truth for the models root directory.
-    Prefers app.core.paths first, then settings, then a conservative literal.
-    Note: this does not create a default database; it only locates the base directory.
+    """Return the root directory that holds all model subfolders.
+
+    Prefers an explicit Path on `app.core.paths`, then `settings`, then a
+    conservative literal. This does not create directories or files.
     """
     # Prefer an explicit Path on `paths`, then `settings`, then final safe literal.
     base = (
@@ -65,21 +78,24 @@ def _resolve_models_dir() -> Path:
 
 
 def _rag_db_path_for(model_id: str) -> Path:
-    """
-    Compute the per-model RAG DB path without creating it.
-    """
+    """Compute the path to `<models_dir>/<model_id>/rag.sqlite` without creating it."""
     return _resolve_models_dir() / model_id / "rag.sqlite"
 
 
 def connect(scope: dict) -> sqlite3.Connection:
-    """
-    Open the per-model RAG SQLite DB.
-    Preconditions:
-      - scope contains 'model_id', 'vendor', 'version' (vendor/version are validated by callers/queries).
-      - the per-model DB must already exist (created by the ingest pipeline).
-    Raises:
-      - ValueError if required scope keys are missing.
-      - FileNotFoundError if the per-model DB file is absent.
+    """Open a connection to the per-model RAG SQLite DB.
+
+    Preconditions
+    -------------
+    - `scope` contains `model_id`, `vendor`, `version` (vendor/version are validated by callers/queries).
+    - The per-model DB already exists (created by the ingest pipeline).
+
+    Raises
+    ------
+    ValueError
+        If required scope keys are missing.
+    FileNotFoundError
+        If the per-model DB file is absent.
     """
     missing = [k for k in ("model_id", "vendor", "version") if k not in (scope or {})]
     if missing:

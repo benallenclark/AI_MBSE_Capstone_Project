@@ -5,15 +5,21 @@
 
 """Utility functions for handling job records and model XML persistence.
 
-This module ensures stable access to job information and guarantees that
-model XML files are stored in a consistent location within the models directory.
+Ensures stable access to job metadata and consistent on-disk storage
+of model XML files within the models directory.
 
 Responsibilities
 ----------------
 - Persist and manage model XML files on disk.
-- Retrieve existing job rows from the database.
-- Synthesize fallback job records for missing entries.
-- Maintain consistent and predictable job data shapes.
+- Retrieve or synthesize job rows for consistent API responses.
+- Provide predictable fallback data shapes when database rows are missing.
+- Support idempotent file writes and safe job metadata retrieval.
+
+Notes
+-----
+- All synthesized job rows follow the same shape as those from the DB.
+- `persist_model_xml` creates directories as needed and is idempotent unless
+  explicitly told to overwrite.
 """
 
 from __future__ import annotations
@@ -27,18 +33,36 @@ from app.core.jobs_db import get_job
 # Write or ensure existence of a model XML file for a given model ID.
 def persist_model_xml(model_id: str, data: bytes, *, overwrite: bool = False) -> Path:
     """
-    Ensure data/models/<model_id>/model.xml exists with the given bytes.
-    Returns the XML Path. Idempotent unless overwrite=True.
+    Ensure the model’s XML file exists under `data/models/<model_id>/model.xml`.
+
+    Parameters
+    ----------
+    model_id : str
+        Unique model identifier.
+    data : bytes
+        Raw XML content to write.
+    overwrite : bool, optional
+        If True, replaces any existing XML file. Defaults to False.
+
+    Returns
+    -------
+    Path
+        The path to the persisted XML file.
+
+    Notes
+    -----
+    - Creates parent directories if missing.
+    - Safe to call multiple times (idempotent unless `overwrite=True`).
     """
     model_dir = paths.model_dir(model_id)
     model_dir.mkdir(parents=True, exist_ok=True)
     xml_path = model_dir / "model.xml"
+
     if overwrite or not xml_path.exists():
         xml_path.write_bytes(data)
     return xml_path
 
 
-# Retrieve an existing job row or synthesize a default snapshot if missing.
 def get_or_synthesize_job_row(
     job_id: str,
     *,
@@ -49,11 +73,38 @@ def get_or_synthesize_job_row(
     fallback_status: str,
 ):
     """
-    Return canonical job row; synthesize a safe snapshot if missing (shape stable for API).
+    Return an existing job record, or synthesize a default one if missing.
+
+    Parameters
+    ----------
+    job_id : str
+        The job identifier to retrieve.
+    sha : str
+        Hash of the model file (used when synthesizing).
+    model_id : str
+        Associated model identifier.
+    vendor : str
+        Model vendor name.
+    version : str
+        Model version or release tag.
+    fallback_status : str
+        Status to assign if no record exists (e.g. "succeeded", "failed").
+
+    Returns
+    -------
+    dict
+        A full job record (either from DB or synthesized for consistency).
+
+    Notes
+    -----
+    - Synthesized rows maintain shape compatibility with `get_job` outputs.
+    - Progress defaults to 100% if status is `"succeeded"`, else 0%.
     """
     row = get_job(job_id)
     if row:
         return row
+
+    # Build a safe, shape-stable fallback row for missing jobs.
     return {  # type: ignore[return-value]
         "id": job_id,
         "sha256": sha,
