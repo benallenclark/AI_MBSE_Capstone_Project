@@ -25,11 +25,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
-from app.api.routes import router
-from app.core import paths
-from app.core.config import settings
-from app.core.lifespan import lifespan as _orig_lifespan
-from app.core.logging_config import configure_logging
+from app.infra.core import paths
+from app.infra.core.config import settings
+from app.infra.core.lifespan import lifespan as _orig_lifespan
+from app.infra.core.logging_config import configure_logging
+from app.interface.api.routes import router
 
 __docformat__ = "google"
 log = logging.getLogger("startup")
@@ -112,6 +112,15 @@ def root() -> HTMLResponse:
 def favicon() -> Response:
     """Return an empty response for favicon lookups (reduces noise in logs)."""
     return Response(status_code=204)
+
+
+log.info(
+    "config: module=%s clean_run=%s cleanup_after=%s models_dir=%s",
+    settings.__module__,
+    settings.CLEAN_RUN_WIPE_DATA,
+    settings.CLEANUP_AFTER_EVIDENCE,
+    settings.MODELS_DIR,
+)
 
 
 # Development only. In production run: `uvicorn app.main:app --host 0.0.0.0 --port 8000`

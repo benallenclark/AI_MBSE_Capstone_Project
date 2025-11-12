@@ -18,25 +18,58 @@ It explains how the system fits together, where each part lives, and how to oper
 
 ## 3. Folder Map
 
-| Area                | Path                            | Purpose                                                  |
-| ------------------- | ------------------------------- | -------------------------------------------------------- |
-| **API**             | `backend/app/api`               | HTTP interface (v1 endpoints, serializers, routers).     |
-| **Core**            | `backend/app/core`              | Configuration, startup, logging, orchestrator, paths.    |
-| **Criteria**        | `backend/app/criteria/mml_*`    | Deterministic maturity rules (MML-1 → MML-N).            |
-| **Evidence**        | `backend/app/evidence`          | Evidence generation, writing, and card assembly.         |
-| **Ingest**          | `backend/app/ingest`            | XML → DuckDB pipeline; schema discovery & normalization. |
-| **Input Adapters**  | `backend/app/input_adapters/`   | Vendor-specific normalization (e.g., Sparx, Cameo).      |
-| **RAG**             | `backend/app/rag`               | Retrieval + LLM layer (FTS, prompt packing, generation). |
-| **Services**        | `backend/app/services`          | Orchestrates app workflows between core and API.         |
-| **Tests**           | `backend/tests`                 | Unit and integration tests                               |
-| **Utils**           | `backend/app/utils`             | Shared helpers (timing, hashing, logging extras).        |
-| **Frontend**        | `/frontend`                     | React + Vite UI                                          |
-| **Blueprint**       | `/blueprint`                    | Diagrams + architecture docs                             |
-| **System Overview** | `/blueprint/SYSTEM_OVERVIEW.md` | You are here                                             |
+| Area                | Path                            | Purpose                                                           |
+| ------------------- | ------------------------------- | ----------------------------------------------------------------- |
+| **System Overview** | `/blueprint/SYSTEM_OVERVIEW.md` | You are here                                                      |
+| **Frontend**        | `/frontend`                     | React + Vite UI                                                   |
+| **Blueprint**       | `/blueprint`                    | Diagrams + architecture docs                                      |
+| **Backend/**        | `backend/app/artifacts`         | Packaged assets (e.g., RAG schema, static resources)              |
+|                     | `backend/app/ingest`            | XML → DuckDB pipeline; IR views and normalization                 |
+|                     | `backend/app/infra`             | Infrastructure: config, paths, jobs DB, maintenance utilities     |
+|                     | `backend/app/interface`         | API (v1) + bridge use-cases wiring API to domain/infra            |
+|                     | `backend/app/knowledge`         | Domain logic (criteria/predicates, runner, protocols)             |
+|                     | `backend/app/rag`               | Retrieval (FTS), prompt building, LLM clients/calls               |
+|                     | `backend/ops/data`              | Ephemeral per-model runtime (duckdb, evidence, summaries, RAG DB) |
+|                     | `backend/ops/persistent`        | Post-run snapshots for audit (`evidence.jsonl`, summaries)        |
+|                     | `backend/samples/`              | Models that are being tested                                      |
 
 ---
 
-## 4. Runbook
+## 4. Request to Result
+
+**1. Upload →** `POST /v1/analyze/upload`
+
+- Ingest parses XML → builds `model.duckdb`
+- Creates IR views + writes `evidence/evidence.jsonl`
+
+**2. Run Criteria →** `app/knowledge/criteria/runner.py`
+
+- Executes predicates (MML-1…N)
+- Emits `summary.json` and `summary.api.json` (UI-ready)
+
+**3. Build RAG (between 2 and 3) →** `app/rag/*`
+
+- Packs per-model retrieval DB: `rag.sqlite` (FTS5 + docs)
+- Preps prompt builders for explanations and follow-ups
+
+**4. Snapshot →** `app/infra/utils/maintenance.py`
+
+- Copies `evidence.jsonl`, `summary.json`, `summary.api.json` → `backend/ops/persistent/<model_id>/`
+
+**5. Frontend fetch →** `GET /v1/models/{model_id}`
+
+- API serves only the prebuilt `summary.api.json`
+- If missing, returns **404**
+
+**6. (Optional) Prompt LLM →**
+
+- Non-stream: `POST /v1/rag/ask`
+- Stream: `POST /v1/rag/ask_stream` (SSE/NDJSON)
+- Uses `rag.sqlite` + prompt builders to generate cited, evidence-aware answers
+
+---
+
+## 5. Runbook
 
 ### Backend (Python 3.12.10 + FastAPI)
 
@@ -166,12 +199,12 @@ If the model responds, your LLM is correctly installed and working.
     npm run storybook
 ```
 
-## 5. Design Principles
+## 6. Design Principles
 
-- Single Source of Truth – One backend, one database, one JSON evidence chain shared across API, UI, and RAG.
-- Deterministic Core – All maturity logic runs via transparent predicates; every result is reproducible.
-- Evidence-First – Every conclusion traces back to specific data and model elements.
-- Ephemeral by Default – Uses per-run SQLite and DuckDB; no raw XML persisted unless explicitly configured.
-- Explainable AI – The LLM narrates findings, never decides outcomes.
-- Composable Layers – Each stage (ingest → criteria → evidence → RAG) is isolated yet interoperable.
-- Human-Readable Internals – Code, data, and logs are designed to be inspectable and self-documenting.
+- Single Source of Truth - One backend, one database, one JSON evidence chain shared across API, UI, and RAG.
+- Deterministic Core - All maturity logic runs via transparent predicates; every result is reproducible.
+- Evidence-First - Every conclusion traces back to specific data and model elements.
+- Ephemeral by Default - Uses per-run SQLite and DuckDB; no raw XML persisted unless explicitly configured.
+- Explainable AI - The LLM narrates findings, never decides outcomes.
+- Composable Layers - Each stage (ingest → criteria → evidence → RAG) is isolated yet interoperable.
+- Human-Readable Internals - Code, data, and logs are designed to be inspectable and self-documenting.

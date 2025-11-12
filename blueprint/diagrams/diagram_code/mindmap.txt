@@ -1,0 +1,23 @@
+mindmap
+  root((AI·MBSE Backend))
+    Interface
+      API (routes & contracts)
+      Services (bridge)
+    Pipeline
+      ingest_stage
+      predicate_stage
+      evidence_stage
+      rag_stage
+      orchestrator
+    Domain Logic
+      criteria (predicates, loader, runner)
+      input_adapters (vendor rules)
+    Data Products
+      evidence (cards, writer)
+      rag (fts, retrieve, service)
+    Core Infra
+      config, paths, jobs_db, lifespan, logging
+    Utilities
+      hashing, logging_extras, timing
+    Ops
+      tools, tests, docs, data

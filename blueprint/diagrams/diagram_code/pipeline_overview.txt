@@ -1,0 +1,14 @@
+flowchart TB
+  A[Upload XML] --> B[ingest_stage\nXML → Parquet/DuckDB/IR]
+  B --> C[predicate_stage<br>Run MML predicates]
+  C --> D[evidence_stage<br>Assemble & write Evidence]
+  D --> E["rag_stage<br>Build rag.sqlite (FTS5)"]
+  E --> F[rag.service<br>retrieve → pack → LLM]
+
+  subgraph Interface
+    G[/api.v1.analyze/]
+    H[/api.v1.rag/ask/]
+  end
+
+  G --> A
+  H --> F

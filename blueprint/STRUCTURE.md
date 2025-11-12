@@ -1,128 +1,207 @@
+# Project Structure & Mental Model
+
+This backend is designed to be understood as a deterministic, four-stage pipeline.  
+It separates cleanly into conceptual layers: **Interface → Flow → Knowledge → Artifacts → Infra**
+
+---
+
+## Goal
+
+> **Make the backend read like a mind map.**  
+> Each layer has one job:
+>
+> - **Interface** exposes the system publicly.
+> - **Flow** executes deterministic stages.
+> - **Knowledge** defines what “maturity” means.
+> - **Artifacts** represent produced data.
+> - **Infra** keeps everything running.
+
+## Diagrams
+
+- [View MindMap Idea ›](../blueprint/diagrams/mindmap.png)
+- [View Pipeline Overview ›](../blueprint/diagrams/pipeline_overview.png)
+
+**Simply put:**  
+`Interface` drives `Flow`;  
+`Flow` uses `Knowledge` to create `Artifacts`;  
+`Infra` supports it all.
+
+---
+
+## Orientation Map
+
+| Layer         | Description                                                    | Examples                                               |
+| ------------- | -------------------------------------------------------------- | ------------------------------------------------------ |
+| **Interface** | Public entrypoints — HTTP routes, contracts, service bridges.  | `app/interface/api/*`, `app/interface/bridge/*`        |
+| **Flow**      | Deterministic pipeline — ingest → predicates → evidence → RAG. | `app/flow/*`                                           |
+| **Knowledge** | Domain logic — what maturity means, how to interpret models.   | `app/knowledge/criteria/*`, `app/knowledge/adapters/*` |
+| **Artifacts** | Tangible results and queryable outputs.                        | `app/artifacts/evidence/*`, `app/artifacts/rag/*`      |
+| **Infra**     | Core runtime, config, and utilities.                           | `app/infra/core/*`, `app/infra/utils/*`                |
+
+---
+
+## Stable Stage Contracts
+
+Each stage is a callable unit — stable, mockable, and testable in isolation.
+
+| Stage               | Function                                   | Output                                                        |
+| ------------------- | ------------------------------------------ | ------------------------------------------------------------- |
+| **ingest_stage**    | `run(xml_path, *, model_id=None)`          | `{model_id, duckdb_path, timings, ...}`                       |
+| **predicate_stage** | `run(db, ctx, *, groups=None)`             | `(maturity_level, evidence_items, per_level_breakdown)`       |
+| **evidence_stage**  | `run(model_dir, *, ctx, predicate_output)` | `[evidence_cards...]`                                         |
+| **rag_stage**       | `run(model_id)`                            | `rag.sqlite path`                                             |
+| **orchestrator**    | `run_all(...)`                             | `{model_id, maturity_level, levels, duckdb_path, rag_sqlite}` |
+
+---
+
+## Naming Conventions
+
+| Category               | Rule                  | Example                               |
+| ---------------------- | --------------------- | ------------------------------------- |
+| **Flow**               | Verbs (actions)       | `ingest_stage.py`, `orchestrator.py`  |
+| **Knowledge**          | Nouns (concepts)      | `criteria.runner`, `adapters.router`  |
+| **Interface / Bridge** | Verbs (API actions)   | `analyze.py`, `get_model.py`          |
+| **Artifacts**          | Nouns or data actions | `evidence.writer`, `rag.service`      |
+| **Infra**              | Nouns (scaffolding)   | `config.py`, `paths.py`, `jobs_db.py` |
+
+---
+
+## Trace: Request → Answer
+
+1. **API /v1/analyze** → `bridge.analysis` → `flow.orchestrator`
+2. **Orchestrator** runs stages: `ingest → predicates → evidence → rag`
+3. **API /v1/rag/ask** → `rag.service` uses `rag.sqlite` + LLM → **answer**
+
+---
+
+## Why This Structure Works
+
+- **Navigation by intent.** Every folder describes _why_ it exists, not _what_ it contains.
+- **Isolation by design.** Each stage can be tested or swapped independently.
+- **Infra is stable; domain evolves freely.**
+- **No cross-contamination.** API never touches DuckDB, predicates, or FTS internals.
+- **Drill-down clarity:**
+  - Interface → Flow → specific stages
+  - Knowledge → specific predicates/adapters
+  - Artifacts → tangible databases/files
+
+---
+
+## TL;DR
+
+> **Folders are ideas; files are verbs.**
+>
+> `Interface` talks to `Flow`.  
+> `Flow` calls `Knowledge`.  
+> `Knowledge` produces `Artifacts`.  
+> `Infra` keeps it all together.
+
+---
+
+## Folder Tree Overview
+
 ```text
 backend/
 ├── app/
-│   ├── api/
-│   │   ├── v1/
-│   │   │   ├── analyze.py        # /v1/analyze (JSON) + /upload (multipart); runs pipeline/job
-│   │   │   ├── health.py         # /v1/health (and /ready if desired)
-│   │   │   ├── jobs.py           # /v1/jobs/{id}; status/progress/timings/links
-│   │   │   ├── models.py         # Pydantic contracts (Vendor, AnalyzeRequest, responses)
-│   │   │   ├── models_read.py    # GET /v1/models/{id}; call service; return contract
-│   │   │   ├── rag_stream.py     # /v1/rag/ask_stream → SSE/NDJSON streaming via service.ask_stream
-│   │   │   ├── rag.py            # /v1/rag/ask; retrieve → pack → LLM
-│   │   │   └── serializer/
-│   │   │       ├── jobs.py         # Map JobRow → public job payload; add links
-│   │   │       └── analysis.py     # Map Evidence → PredicateResult; fingerprint
-│   │   │
-│   │   └── routes.py             # Compose and register v1 routers
+│   ├── interface/                         # Public surface: HTTP + thin bridges
+│   │   ├── api/
+│   │   │   └── v1/
+│   │   │       ├── health.py              # /v1/health, optional /ready
+│   │   │       ├── jobs.py                # /v1/jobs/{id} (poll job status)
+│   │   │       ├── models.py              # Pydantic wire contracts (strict)
+│   │   │       ├── get_model.py           # GET /v1/models/{id} → read summary.api.json
+│   │   │       ├── rag_stream.py          # /v1/rag/ask_stream (SSE/NDJSON)
+│   │   │       ├── rag.py                 # /v1/rag/ask (retrieve → pack → LLM)
+│   │   │       └── serializers/
+│   │   │           ├── jobs.py            # JobRow → JobContract (+links)
+│   │   │           └── analysis.py        # EvidenceItem → PredicateResult (+fingerprint)
+│   │   ├── bridge/                        # Thin adapters: API → Flow/Infra
+│   │   │   ├── analysis.py                # Orchestrate ingest→predicates→evidence→rag
+│   │   │   ├── jobs.py                    # Job DB helpers for upload/poll
+│   │   │   └── get_model.py               # Read prebuilt summaries for UI
+│   │   └── routes.py                      # Mount v1 routers
 │   │
-│   ├── core/
-│   │   ├── config.py             # Pydantic settings (env-driven)
-│   │   ├── jobs_db.py            # Minimal jobs SQLite (idempotency/progress)
-│   │   ├── lifespan.py           # Startup/shutdown hooks
-│   │   ├── logging_config.py     # Unified logging setup
-│   │   ├── orchestrator.py       # Ingest → IR → predicates → RAG (single runner)
-│   │   └── paths.py              # Single source of truth for repo/data paths
+│   ├── flow/                              # Deterministic pipeline stages
+│   │   ├── ingest_stage.py                # XML→tables→parquet/duckdb
+│   │   ├── predicate_stage.py             # Run criteria runner; collect evidence
+│   │   ├── evidence_stage.py              # Build/write evidence cards
+│   │   ├── rag_stage.py                   # Build RAG index (rag.sqlite)
+│   │   └── orchestrator.py                # Run stages, return run summary
 │   │
-│   ├── criteria/
-│   │   ├── __init__.py
-│   │   ├── loader.py             # Discover predicate modules
-│   │   ├── protocols.py          # Predicate interfaces + Context
-│   │   ├── runner.py             # Execute predicates; emit Evidence v2 rows
-│   │   ├── utils.py              # Execute predicates; emit Evidence v2 rows
-│   │   ├── mml_1/
-│   │   │   ├── __init__.py
-│   │   │   └── predicate_count_tables.py   # Core tables present & populated
-│   │   ├── mml_2/
-│   │   │   ├── __init__.py
-│   │   │   ├── predicate_nonempty_names.py
-│   │   │   └── predicate_block_has_ports.py# Blocks have ≥1 typed port
-│   │   ├── mml_3/
-│   │   │   └── __init__.py                 # Placeholder
-│   │   └── mml_4/
-│   │       └── __init__.py                 # Placeholder
+│   ├── knowledge/                         # Domain truth (criteria + adapters)
+│   │   ├── criteria/
+│   │   │   ├── __init__.py                # Package marker
+│   │   │   ├── loader.py                  # Discover predicates by group (mml_N)
+│   │   │   ├── protocols.py               # Context/DbLike predicate signatures
+│   │   │   ├── runner.py                  # Execute all predicates; emit levels/evidence
+│   │   │   ├── utils.py                   # Small helpers for predicate authors
+│   │   │   ├── mml_1/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── predicate_count_tables.py     # Sanity check: required EA tables
+│   │   │   ├── mml_2/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── predicate_nonempty_names.py   # No empty names on core elements
+│   │   │   │   └── predicate_block_has_port.py   # Blocks expose at least one port
+│   │   └── adapters/
+│   │       ├── protocols.py                # Vendor adapter contracts
+│   │       ├── router.py                   # Pick adapter for vendor/version
+│   │       ├── cameo/                      # Cameo-specific adapters
+│   │       └── sparx/
+│   │           └── v17_1/adapter.py        # Sparx 17.1 → IR mapping
 │   │
-│   ├── evidence/
-│   │   ├── api.py              # Thin façade: emit Evidence v2 and list/read artifacts
-│   │   ├── builder.py          # Build Evidence v2 cards (summary + entities)
-│   │   ├── types.py            # EvidenceCard / PredicateOutput types
-│   │   └── writer.py           # Write evidence.jsonl; optional Parquet mirror
+│   ├── artifacts/                         # Data products (evidence + RAG)
+│   │   ├── evidence/
+│   │   │   ├── api.py                     # Evidence API packers
+│   │   │   ├── assembler.py               # Merge predicate outputs → cards
+│   │   │   ├── types.py                   # Evidence card types
+│   │   │   └── writer.py                  # Write evidence.jsonl (append-only)
+│   │   └── rag/
+│   │       ├── build_index.py             # Ingest evidence → FTS tables
+│   │       ├── db.py                      # SQLite helpers
+│   │       ├── llm.py                     # LLM selection/options
+│   │       ├── pack.py                    # Prompt/citation packing
+│   │       ├── prompts.py                 # Prompt templates
+│   │       ├── retrieve.py                # FTS5/BM25 retrieval
+│   │       ├── schema.sql                 # RAG DB schema (packaged)
+│   │       ├── service.py                 # ask()/ask_stream() orchestration
+│   │       ├── types.py                   # RAG-facing types
+│   │       └── client/
+│   │           ├── ollama_client.py       # Robust Ollama HTTP client
+│   │           └── protocols.py           # LLM client interface
 │   │
-│   ├── ingest/
-│   │   ├── build_ir.py         # Create IR views/tables in DuckDB
-│   │   ├── discover_schema.py  # Normalize XML tables/columns
-│   │   ├── errors.py           # Ingest exception types (I/O, DuckDB, file writes)
-│   │   ├── jsonl_writer.py     # Write per-table JSONL with LRU handle limiting
-│   │   ├── loader_duckdb.py    # XML → Parquet → DuckDB; compute model_id
-│   │   ├── normalize_rows.py   # Stream rows; fill missing columns using defaults.
-│   │   ├── duckdb_utils.py     # COPY JSONL→Parquet; create views; count rows
-│   │   ├── schema_config .py   # XML tag/attr config with namespace-safe matching.
-│   │   ├── duckdb_connection.py          # Open DuckDB connection with PRAGMAs applied
-│   │   └── types.py            # TypedDicts for ingest results and table counts
-│   │
-│   ├── input_adapters/
-│   │   ├── cameo/
-│   │   │   └── .gitkeep
-│   │   ├── sparx/
-│   │   │   └── v17_1/
-│   │   │       └── adapter.py  # Sparx v17.1 normalization rules
-│   │   ├── protocols.py        # Adapter contract
-│   │   └── router.py           # Choose adapter by vendor/version
-│   │
-│   ├── rag/
-│   │   ├── __init__.py
-│   │   ├── bootstrap_index.py  # Build per-model rag.sqlite from evidence.jsonl
-│   │   ├── db.py               # Open/query rag.sqlite (FTS5)
-│   │   ├── llm.py              # Ollama/OpenAI provider wrappers
-│   │   ├── pack.py             # Build prompt from retrieved docs
-│   │   ├── prompts.py          # Construct prompts and short summaries from cards
-│   │   ├── retrieve.py         # FTS retrieval + filters
-│   │   ├── schema.sql          # DDL for rag.sqlite
-│   │   ├── service.py          # retrieve → pack → LLM → answer
-│   │   ├── types.py            # Type definitions for RAG cards, answers, citations
-│   │   └── client.py/
-│   │       ├── ollama_client.py   # Ollama HTTP client: options, streaming, fallback
-│   │       └── protocols.py/      # LLM client Protocol: generate() and stream()
-│   │
-│   │
-│   ├── services/
-│   │   ├── analysis.py         # Orchestrate: sync analyze, post-ingest, background job
-│   │   ├── jobs.py             # Persist model.xml; fetch/synthesize job rows
-│   │   └── models_read.py      # Read model: open DuckDB, build Context, run preds
-│   │
-│   │
-│   ├── utils/
-│   │   ├── hashing.py          # compute_sha256 (bytes/stream); pure helpers
-│   │   ├── logging_extras.py   # LoggerAdapter helpers: bind cid and context
-│   │   └── timing.py           # Monotonic timers & helpers
-│   │
-│   ├── main.py                 # FastAPI app factory/entrypoint
+│   └── infra/                             # Configuration & runtime support
+│       ├── core/
+│       │   ├── config.py                  # Settings/env (models/paths/llm)
+│       │   ├── jobs_db.py                 # jobs.sqlite connect/query helpers
+│       │   ├── lifespan.py                # FastAPI lifespan hooks
+│       │   ├── logging_config.py          # Structured logging setup
+│       │   └── paths.py                   # Canonical paths + snapshot/prune
+│       └── utils/
+│           ├── hashing.py                 # SHA-256 helpers
+│           ├── logging_extras.py          # Logger adapters/decorators
+│           └── timing.py                  # perf timers + context manager
+│
+│   ├── main.py                            # FastAPI entrypoint (CORS, routes)
 │   └── __init__.py
 │
-├── data/
-│   ├── models/
-│   │   └── <model_id>/
-│   │       ├── model.xml
-│   │       ├── model.duckdb
-│   │       ├── evidence/
-│   │       │   └── evidence.jsonl
-│   │       ├── parquet/
-│   │       └── rag.sqlite      # Per-model RAG index (FTS5)
-│   └── jobs.sqlite             # Jobs DB (WAL)
-│
-├── docs/                       # Sphinx/docs
-├── samples/
-│   ├── sparx/
-│   │   └── v17_1/
-│   │       ├── APE-ReferenceModel.xml
-│   │       └── DellSat-77_System.xml
-│   └── cameo/
-│
-├── tests/
-│
-├── tools/
-│   └── run_pipeline.py         # CLI: end-to-end pipeline (no API)
-│
+├── ops/                                   # Operations, data, docs, tests
+│   ├── tools/
+│   │   └── run_pipeline.py                # Local dev: run the full pipeline
+│   ├── tests/                             # Unit/integration tests
+│   ├── docs/                              # Generated or supporting docs
+│   ├── persistent/                        # Placeholder for storing generated evidence per model_id
+│   └── data/
+│       ├── models/
+│       │   └── <model_id>/
+│       │       ├── model.xml              # Uploaded source (kept)
+│       │       ├── model.duckdb           # Per-run DB (kept for /v1/models)
+│       │       ├── summary.json           # Rich run summary (levels + counts)
+│       │       ├── summary.api.json       # UI-ready compact results (no fallback)
+│       │       ├── evidence/
+│       │       │   └── evidence.jsonl     # Append-only predicate evidence
+│       │       ├── parquet/               # Ephemeral parquet (pruned post-run)
+│       │       └── rag.sqlite             # RAG index (FTS5)
+│       └── jobs.sqlite                    # Job state DB
 └── pyproject.toml
 
 ```

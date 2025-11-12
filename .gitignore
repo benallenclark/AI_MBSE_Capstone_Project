@@ -40,15 +40,16 @@ backend/logs/
 backend/tmp/
 backend/temp/
 backend/instance/
-backend/data
+backend/ops/data
+backend/ops/persistent
 
 # --- FastAPI / Uvicorn runtime ---
 backend/**/*.pid
 
 # --- Documentation (generated) ---
-backend/docs/_build/
-backend/docs/api/
-backend/docs/.doctrees/
+backend/ops/docs/_build/
+backend/ops/docs/api/
+backend/ops/docs/.doctrees/
 
 # --- OS cruft ---
 backend/.DS_Store
