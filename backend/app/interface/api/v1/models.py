@@ -111,15 +111,29 @@ class SummaryCounts(BaseModel):
     failed: int
 
 
+# Aggregate counts block matching frontend interface
+class CountsBlock(BaseModel):
+    """Counts used by the UI."""
+
+    predicates_total: int
+    predicates_passed: int
+    predicates_failed: int
+    evidence_docs: int
+
+
 # Canonical analysis response for model summaries and (dev) sync analysis.
 class AnalyzeContract(BaseModel):
     """Wire contract for GET /v1/models/{model_id} and dev POST /v1/analyze."""
 
     schema_version: str = "1.0"
+    model_id: str
     model: ModelEcho
     maturity_level: int
-    summary: SummaryCounts
-    results: list[PredicateResult]
+    counts: CountsBlock
+    fingerprint: str
+    levels: dict[str, Any]
+    summary: dict[str, int] | None = None
+    results: list[PredicateResult] | None = None
 
 
 # Hypermedia links associated with a job payload.

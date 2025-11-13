@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/evidence/assembler.py
+# Module: app/artifacts/evidence/assembler.py
 # Purpose: Build and append Evidence v2 JSONL docs (summary + entity cards).
 # ------------------------------------------------------------
 

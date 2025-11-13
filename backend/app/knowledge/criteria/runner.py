@@ -9,7 +9,6 @@ import traceback
 
 from app.infra.utils.timing import ms_since, now_ns
 from app.interface.api.v1.models import EvidenceItem
-from app.interface.api.v1.serializers.analysis import normalize_results
 
 from .loader import discover
 from .protocols import Context, DbLike
@@ -28,27 +27,6 @@ class PredicateCrashed(Exception):
 # Print-friendly duration formatting (sub-ms precision below 1.0ms, ints otherwise).
 def _fmt_ms(ms: float) -> str:
     return f"{ms:.3f}" if ms < 1.0 else f"{int(round(ms))}"
-
-
-def _to_api_results(evidence):
-    out = []
-    # sort by predicate; guard None → ""
-    for e in sorted(evidence, key=lambda item: (getattr(item, "predicate", "") or "")):
-        pid = e.predicate or ""
-        # derive MML tier; fall back to 0
-        try:
-            tier = int(pid.split(":")[0].split("_")[1])
-        except Exception:
-            tier = 0
-        # very compact UI-safe record (details redacted)
-        out.append(
-            {
-                "predicate": pid.replace(":", "."),  # dotted for UI
-                "tier": tier,
-                "passed": bool(e.passed),
-            }
-        )
-    return out
 
 
 # Execute discovered predicates and return:
@@ -246,37 +224,31 @@ if __name__ == "__main__":
     import duckdb
 
     from app.infra.core import paths
-
-    from .protocols import Context
+    from app.infra.io.write_summary import (
+        count_evidence_docs,
+        write_summary_json,
+    )
+    from app.knowledge.criteria.build_summary import build_summary_dict
+    from app.knowledge.criteria.protocols import Context
 
     ap = argparse.ArgumentParser(
-        description="Run maturity predicates and emit evidence.jsonl"
+        description="Run maturity predicates and emit summary.json"
     )
-    ap.add_argument(
-        "--model-dir",
-        type=Path,
-        required=True,
-        help="Path to model dir (…/data/models/<id>)",
-    )
-    ap.add_argument(
-        "--vendor", type=str, default="", help="Vendor (e.g., sparx, cameo)"
-    )
-    ap.add_argument(
-        "--version", type=str, default="", help="Vendor version (e.g., 17.1)"
-    )
+    ap.add_argument("--model-dir", type=Path, required=True)
+    ap.add_argument("--vendor", type=str, default="")
+    ap.add_argument("--version", type=str, default="")
     args = ap.parse_args()
 
     model_dir = args.model_dir.resolve()
     model_id = model_dir.name
 
-    db_path = model_dir / "model.duckdb"
-    print(f"[runner] connect duckdb={db_path}", flush=True)
-    con = duckdb.connect(str(db_path))
+    print(f"[runner] connect duckdb={model_dir / 'model.duckdb'}", flush=True)
+    con = duckdb.connect(str(model_dir / "model.duckdb"))
     con.execute("PRAGMA enable_object_cache=true;")
 
     ctx = Context(
-        vendor=args.vendor or "",
-        version=args.version or "",
+        vendor=args.vendor,
+        version=args.version,
         model_dir=model_dir,
         model_id=model_id,
         output_root=paths.MODELS_DIR,
@@ -285,74 +257,9 @@ if __name__ == "__main__":
     level, evidence, levels = run_predicates(con, ctx)
     con.close()
 
-    # --- write final summary.json (vendor/version-aware) ---
-    import hashlib
-    import json
-
-    from app.infra.core import paths
-
-    ej = paths.evidence_jsonl(model_id)
-    docs = 0
-    try:
-        with ej.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                if line.strip():
-                    docs += 1
-    except FileNotFoundError:
-        docs = 0
-
-    # deterministic fingerprint from predicate pass/fail + details keys
-    fp_src = [
-        {
-            "id": e.predicate,
-            "passed": bool(e.passed),
-            "keys": sorted(list((e.details or {}).keys())),
-        }
-        for e in sorted(evidence, key=lambda x: (x.predicate or ""))
-    ]
-
-    # Deterministic fingerprint over (id, passed, detail-keys) for cache/diff in UI.
-    fingerprint = hashlib.sha256(
-        json.dumps(fp_src, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-    summary = {
-        "schema_version": "1.0",
-        "model_id": model_id,
-        "model": {"vendor": args.vendor or "", "version": args.version or ""},
-        "maturity_level": level,
-        "counts": {
-            "predicates_total": len(evidence),
-            "predicates_passed": sum(1 for e in evidence if e.passed),
-            "predicates_failed": sum(1 for e in evidence if not e.passed),
-            "evidence_docs": docs,
-        },
-        "fingerprint": fingerprint,
-        "levels": levels,
-    }
-    paths.summary_json(model_id).write_text(
-        json.dumps(summary, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    docs = count_evidence_docs(model_id)
+    summary = build_summary_dict(
+        model_id, args.vendor, args.version, level, evidence, levels, docs
     )
-
-    norm = normalize_results(evidence, redact=True)
-    api_summary = {
-        "schema_version": "1.0",
-        "model": {"vendor": args.vendor or "", "version": args.version or ""},
-        "maturity_level": level,
-        "summary": {
-            "total": len(norm),
-            "passed": sum(1 for r in norm if r.passed),
-            "failed": sum(1 for r in norm if not r.passed),
-        },
-        # dump Pydantic models to plain dicts for JSON
-        "results": [r.model_dump(exclude_none=True) for r in norm],
-    }
-
-    (model_dir / "summary.api.json").write_text(
-        json.dumps(api_summary, ensure_ascii=False, separators=(",", ":")),
-        encoding="utf-8",
-    )
-    print(
-        f"[runner] exit maturity_level={level} evidence_items={len(evidence)} summary.json=written",
-        flush=True,
-    )
+    out_path = write_summary_json(model_id, summary)
+    print(f"[runner] exit maturity_level={level}, summary.json={out_path}")

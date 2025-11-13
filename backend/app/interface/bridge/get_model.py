@@ -23,9 +23,6 @@ Notes
 
 from __future__ import annotations
 
-import json
-
-from app.infra.core import paths
 from app.infra.core.jobs_db import _connect as _jobs_connect  # TODO: public helper
 from app.interface.api.v1.models import EvidenceItem
 
@@ -74,33 +71,8 @@ def _row_to_evidence(row: dict) -> EvidenceItem:
     )
 
 
-def read_model_summary(model_id: str) -> tuple[int, list[EvidenceItem], str, str]:
-    model_dir = paths.model_dir(model_id)
-    job = get_latest_job(model_id) or {}
-    vendor = str(job.get("vendor", ""))
-    version = str(job.get("version", ""))
+from app.knowledge.criteria.summary_service import get_summary_for_api
 
-    api_path = model_dir / "summary.api.json"
-    if not api_path.exists():
-        raise FileNotFoundError(f"summary_api_not_found: {api_path}")
 
-    data = json.loads(api_path.read_text(encoding="utf-8"))
-    lvl = _coerce_maturity_level(data.get("maturity_level", 0))
-
-    model_meta = data.get("model") or {}
-    vendor = str(model_meta.get("vendor", vendor))
-    version = str(model_meta.get("version", version))
-
-    results = data.get("results") or []
-    ev = []
-    for r in results:
-        # r has keys id, mml, passed, details (already redacted/safe)
-        pid = str(r.get("id", ""))
-        det = r.get("details") or {}
-        ev.append(
-            EvidenceItem(
-                predicate=pid, passed=bool(r.get("passed", False)), details=det
-            )
-        )
-
-    return lvl, ev, vendor, version
+def read_model_summary(model_id: str):
+    return get_summary_for_api(model_id)
