@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { uploadAndAnalyze, type AnalyzeResponse } from '../../services/upload-service';
 import FileDrop from '../shared/file-drop/file-drop';
 import UploadItemStatus, { type UploadStatus } from './components/upload-item-status/upload-item-status';
@@ -12,6 +13,7 @@ interface ModelFile {
 }
 
 export default function UploadWizard() {
+  const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState<ModelFile | null>(null);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('pending');
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -73,6 +75,9 @@ export default function UploadWizard() {
       setUploadStatus('complete');
       setUploadProgress(100);
       setAnalysisResult(result);
+
+      // Navigate to results page with analysis data
+      navigate('/results', { state: { analysisData: result } });
     } catch (error) {
       setUploadStatus('error');
       setUploadError(error instanceof Error ? error.message : 'Upload failed');

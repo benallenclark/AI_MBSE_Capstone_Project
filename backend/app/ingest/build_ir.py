@@ -138,10 +138,34 @@ def build_helpers(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
             [schema, name]
         ).fetchone())
 
+    def _column_exists(schema: str, table: str, column: str) -> bool:
+        return bool(con.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema=? AND table_name=? AND column_name=?",
+            [schema, table, column]
+        ).fetchone())
+
     # blocks/ports need ir.t_object
     if _table_exists("ir", "t_object"):
         con.execute(HELPERS["blocks"])
-        con.execute(HELPERS["ports"])
+
+        # Check if PDATA1 column exists before using it
+        if _column_exists("ir", "t_object", "pdata1"):
+            con.execute(HELPERS["ports"])
+        else:
+            # Create ports table without PDATA1 column
+            con.execute("""
+                CREATE OR REPLACE TABLE irx.ports AS
+                SELECT
+                  p.Object_ID AS port_oid,
+                  UPPER(REPLACE(REPLACE(TRIM(p.ea_guid),'{',''),'}','')) AS port_guid,
+                  TRIM(p.Name) AS port_name,
+                  p.ParentID   AS parent_block_oid,
+                  p.Classifier AS classifier_oid,
+                  NULL AS pdata1_guid,
+                  p.Stereotype AS port_stereotype
+                FROM ir.t_object p
+                WHERE LOWER(p.Stereotype) IN ('port','proxyport','fullport');
+            """)
     else:
         # Creates empty helper tables when sources are missing to keep downstream SQL running.
         #  Useful for robustness, but can hide upstream ingest issues—log/alert on zero-row helpers in production.
