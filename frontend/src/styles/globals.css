@@ -8,6 +8,9 @@
   --color-primary-hover: #535bf2;
   --color-primary-light: #747bff;
 
+  --color-white: #ffffff;
+  --color-black: #000000;
+
   --color-text-primary: #213547;
   --color-text-secondary: #646464;
   --color-text-light: rgba(255, 255, 255, 0.87);
@@ -25,7 +28,7 @@
   --color-info: #3b82f6;
 
   /* Typography */
-  --font-family-base: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --font-family-base: 'Inter', sans-serif;
   --font-family-mono: 'Courier New', monospace;
 
   --font-size-xs: 0.75rem;
@@ -83,27 +86,8 @@
   --z-tooltip: 1070;
 }
 
-/* Light mode (default) */
-@media (prefers-color-scheme: light) {
-  :root {
-    --color-text-primary: #213547;
-    --color-text-secondary: #646464;
-    --color-bg-light: #ffffff;
-    --color-bg-dark: #f9f9f9;
-    --color-border: #e0e0e0;
-  }
-}
-
-/* Dark mode */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-text-primary: rgba(255, 255, 255, 0.87);
-    --color-text-secondary: #b0b0b0;
-    --color-bg-light: #242424;
-    --color-bg-dark: #1a1a1a;
-    --color-border: #303030;
-  }
-}
+/* Force light mode only - dark mode disabled */
+/* Removed dark mode media queries to ensure consistent light theme */
 
 /* Reset and base styles */
 * {
@@ -121,9 +105,9 @@ body {
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-normal);
   line-height: var(--line-height-normal);
-  color: var(--color-text-primary);
-  background-color: var(--color-bg-light);
-  color-scheme: light dark;
+  color: #213547;
+  background-color: #ffffff;
+  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

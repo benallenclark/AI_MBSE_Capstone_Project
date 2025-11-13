@@ -1,0 +1,125 @@
+@import '../../../styles/globals.css';
+
+.analysis-results-page {
+  min-height: 100vh;
+  background-color: var(--color-bg-light);
+  display: flex;
+  flex-direction: column;
+}
+
+.analysis-results-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-size: var(--font-size-lg);
+  color: var(--color-text-secondary);
+}
+
+.analysis-results-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--spacing-xl);
+  box-sizing: border-box;
+}
+
+.analysis-results-header {
+  margin-bottom: var(--spacing-xl);
+}
+
+.analysis-results-header h1 {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.analysis-metadata {
+  display: flex;
+  gap: var(--spacing-xl);
+  flex-wrap: wrap;
+}
+
+.metadata-item {
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+}
+
+.metadata-item strong {
+  color: var(--color-text-primary);
+  margin-right: var(--spacing-xs);
+}
+
+/* Split Layout */
+.analysis-results-content {
+  display: grid;
+  grid-template-columns: 60% 40%;
+  gap: var(--spacing-xl);
+  flex: 1;
+  min-height: 0; /* Important for proper scrolling */
+}
+
+.results-section,
+.chat-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* Important for proper scrolling */
+}
+
+/* Tablet Layout */
+@media (max-width: 1024px) {
+  .analysis-results-content {
+    grid-template-columns: 50% 50%;
+    gap: var(--spacing-lg);
+  }
+  
+  .analysis-results-container {
+    padding: var(--spacing-lg);
+  }
+}
+
+/* Mobile Layout - Stacked */
+@media (max-width: 768px) {
+  .analysis-results-content {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-lg);
+  }
+
+  .analysis-results-container {
+    padding: var(--spacing-md);
+  }
+
+  .analysis-results-header h1 {
+    font-size: var(--font-size-2xl);
+  }
+
+  .analysis-metadata {
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+
+  /* On mobile, make chat section collapsible or tabbed */
+  .chat-section {
+    order: 2;
+  }
+
+  .results-section {
+    order: 1;
+  }
+}
+
+/* Small Mobile */
+@media (max-width: 480px) {
+  .analysis-results-container {
+    padding: var(--spacing-sm);
+  }
+  
+  .analysis-results-header h1 {
+    font-size: var(--font-size-xl);
+  }
+}
+
