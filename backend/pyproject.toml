@@ -17,9 +17,9 @@ reportOptionalMemberAccess = "warning"
 reportUnusedImport = "warning"
 reportPrivateImportUsage = "none"
 
-# Build backend: standard with least resistance
+# Build backend
 [build-system]
-requires = ["setuptools>=80.9.0", "wheel"] # DECISION: stick with setuptools
+requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -68,6 +68,7 @@ include = ["app*"]                        # Keep tests/data out by default
 
 [tool.setuptools.package-data]
 "app.tempdb" = ["schema.sql"]
+"app.artifacts.rag" = ["*.sql"]
 
 # Uvicorn CLI defaults
 [tool.uvicorn]

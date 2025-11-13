@@ -24,6 +24,8 @@ import json
 import pathlib
 from typing import Any
 
+from .coerce import fact_to_mapping, to_mapping
+
 
 def _norm_probe_id(pid: str) -> str:
     """Normalize probe IDs to storage/display form.
@@ -46,63 +48,63 @@ def _is_dataclass_instance(obj) -> bool:
         return False
 
 
-def _to_mapping(obj: Any) -> dict[str, Any]:
-    """Coerce predicate output into a narrow dict of allowed fields.
+# def _to_mapping(obj: Any) -> dict[str, Any]:
+#     """Coerce predicate output into a narrow dict of allowed fields.
 
-    Accepts dict, dataclass, or generic object with attributes and returns only
-    the expected keys (probe_id, counts, facts, etc.) to keep shape predictable.
-    """
-    if isinstance(obj, dict):
-        return obj
-    if _is_dataclass_instance(obj):
-        from dataclasses import asdict
+#     Accepts dict, dataclass, or generic object with attributes and returns only
+#     the expected keys (probe_id, counts, facts, etc.) to keep shape predictable.
+#     """
+#     if isinstance(obj, dict):
+#         return obj
+#     if _is_dataclass_instance(obj):
+#         from dataclasses import asdict
 
-        return asdict(obj)
-    out: dict[str, Any] = {}
-    for k in (
-        "probe_id",
-        "mml",
-        "counts",
-        "facts",
-        "source_tables",
-        "category",
-        "rule",
-        "severity",
-        "measure",
-        "refs",
-    ):
-        if hasattr(obj, k):
-            out[k] = getattr(obj, k)
-    return out
+#         return asdict(obj)
+#     out: dict[str, Any] = {}
+#     for k in (
+#         "probe_id",
+#         "mml",
+#         "counts",
+#         "facts",
+#         "source_tables",
+#         "category",
+#         "rule",
+#         "severity",
+#         "measure",
+#         "refs",
+#     ):
+#         if hasattr(obj, k):
+#             out[k] = getattr(obj, k)
+#     return out
 
 
-def _fact_to_mapping(obj: Any) -> dict[str, Any]:
-    """Coerce a per-entity fact to a compact mapping of known fields.
+# def _fact_to_mapping(obj: Any) -> dict[str, Any]:
+#     """Coerce a per-entity fact to a compact mapping of known fields.
 
-    Accepts dict, dataclass, or attribute-bearing object. Unknown fields are
-    dropped to avoid bloat in stored documents.
-    """
-    if isinstance(obj, dict):
-        return obj
-    if _is_dataclass_instance(obj):
-        from dataclasses import asdict
+#     Accepts dict, dataclass, or attribute-bearing object. Unknown fields are
+#     dropped to avoid bloat in stored documents.
+#     """
+#     if isinstance(obj, dict):
+#         return obj
+#     if _is_dataclass_instance(obj):
+#         from dataclasses import asdict
 
-        return asdict(obj)
-    out: dict[str, Any] = {}
-    for k in (
-        "subject_type",
-        "subject_id",
-        "subject_name",
-        "has_issue",
-        "child_count",
-        "tags",
-        "meta",
-        "refs",
-        "quotes",
-    ):
-        if hasattr(obj, k):
-            out[k] = getattr(obj, k)
-    return out
+#         return asdict(obj)
+#     out: dict[str, Any] = {}
+#     for k in (
+#         "subject_type",
+#         "subject_id",
+#         "subject_name",
+#         "has_issue",
+#         "child_count",
+#         "tags",
+#         "meta",
+#         "refs",
+#         "quotes",
+#     ):
+#         if hasattr(obj, k):
+#             out[k] = getattr(obj, k)
+#     return out
 
 
 class EvidenceBuilder:
@@ -141,7 +143,7 @@ class EvidenceBuilder:
         - `mml` is treated as an integer maturity level (0 if omitted).
         - Side effect: appends to `evidence.jsonl` with compact separators.
         """
-        outd = _to_mapping(out)
+        outd = to_mapping(out)
 
         # Hard requirement: probe_id must be present after normalization.
         pid = _norm_probe_id(outd.get("probe_id", ""))
@@ -192,7 +194,7 @@ class EvidenceBuilder:
 
         # One doc per subject (block/port/etc.); includes tags/meta for filtering.
         for fobj in outd.get("facts") or []:
-            f = _fact_to_mapping(fobj)
+            f = fact_to_mapping(fobj)
             subject_type = f.get("subject_type", "entity")
             subject_id = f.get("subject_id")
             subject_name = f.get("subject_name", "")

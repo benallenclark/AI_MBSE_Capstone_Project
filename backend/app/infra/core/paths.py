@@ -15,7 +15,9 @@ Responsibilities
 
 from __future__ import annotations
 
+import os
 import shutil
+from functools import lru_cache
 from importlib.resources import files as _pkg_files
 from pathlib import Path
 from uuid import uuid4
@@ -114,20 +116,33 @@ def ensure_model_dirs(model_id: str) -> Path:
 
 
 # ---- Package Resources ----
+@lru_cache(maxsize=1)
 def schema_sql_text() -> str:
-    """Load `schema.sql` from package resources; fall back to local copy in dev.
+    """Return the canonical RAG schema SQL (UTF-8).
 
-    Notes
-    -----
-    - Returns the file contents as UTF-8 text.
-    - Fallback path is `app/artifacts/rag/schema.sql` within the repo during development.
+    Load order:
+      1) RAG_SCHEMA_SQL env var (absolute path override for dev/tests)
+      2) Packaged resource: app.artifacts.rag/schema.sql
+      3) Repo fallback:     backend/app/artifacts/rag/schema.sql
+
+    Cached after first read to keep builds fast/deterministic.
     """
+    # 1) explicit override
+    override = os.getenv("RAG_SCHEMA_SQL")
+    if override:
+        p = Path(override)
+        return p.read_text(encoding="utf-8")
+
+    # 2) packaged resource
     try:
         return (_pkg_files("app.artifacts.rag") / "schema.sql").read_text(
             encoding="utf-8"
         )
-    except Exception:
-        return (RAG_DIR / "schema.sql").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        pass  # fall through to 3)
+
+    # 3) repo fallback (dev)
+    return (RAG_DIR / "schema.sql").read_text(encoding="utf-8")
 
 
 # ---- Diagnostics ----

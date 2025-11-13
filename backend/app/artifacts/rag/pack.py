@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/rag/pack.py
+# Module: app/artifacts/rag/pack.py
 # Purpose: Pack N evidence cards into a tight, citeable context string.
 # ------------------------------------------------------------
 
@@ -50,12 +50,9 @@ def pack_context(cards: list[dict[str, Any]]) -> str:
     """
     lines: list[str] = []
     for i, c in enumerate(cards, start=1):
-        # Safely extract and trim the first line of body_text; fall back to empty string.
-        body_first_line = (
-            (c.get("body_text") or "")
-            .strip()
-            .splitlines()[0][: settings.RAG_MAX_CARD_CHARS]
-        )
+        # Accept either 'body_text' (evidence) or 'body' (SQL views); trim to first line.
+        raw = (c.get("body_text") or c.get("body") or "").strip()
+        body_first_line = raw.splitlines()[0][: settings.RAG_MAX_CARD_CHARS]
 
         # Title fallback ensures readability even when metadata is missing.
         title = c.get("title") or c.get("doc_id") or "(untitled)"

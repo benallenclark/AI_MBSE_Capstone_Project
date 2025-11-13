@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: backend/app/assist/prompt_builder.py
+# Module: backend/app/artifacts/rag/prompts.py
 # Purpose: Build context-rich prompts and summaries for MBSE maturity analysis.
 # ------------------------------------------------------------
 

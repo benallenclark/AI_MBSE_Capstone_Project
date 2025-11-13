@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/rag/db.py
+# Module: app/artifacts/rag/db.py
 # Purpose: Open a per-model RAG SQLite DB and expose task-style queries.
 # ------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/api/v1/rag.py
+# Module: app/interface/api/v1/rag.py
 # Purpose: Define REST endpoints for RAG question-answering and deterministic utilities
 # ------------------------------------------------------------
 
@@ -57,7 +57,10 @@ def ask(in_: AskIn, request: Request):
                 "q_len": len(in_.question),
             },
         )
-        resp = rag_ask(in_.question, scope, cid=cid)  # pass cid downstream
+        if not scope or "model_id" not in scope:
+            raise HTTPException(status_code=400, detail="scope.model_id is required")
+        resp = rag_ask(in_.question, scope, cid=cid)
+
         # Encourage service to include retrieval stats in meta
         logger.info("rag.ask done", extra={"cid": cid, "meta": resp.get("meta", {})})
         return resp

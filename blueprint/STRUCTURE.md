@@ -133,6 +133,8 @@ backend/
 │   │   │   ├── __init__.py                # Package marker
 │   │   │   ├── loader.py                  # Discover predicates by group (mml_N)
 │   │   │   ├── protocols.py               # Context/DbLike predicate signatures
+│   │   │   ├── build_summary.py           #
+│   │   │   ├── summary_service.py         #
 │   │   │   ├── runner.py                  # Execute all predicates; emit levels/evidence
 │   │   │   ├── utils.py                   # Small helpers for predicate authors
 │   │   │   ├── mml_1/
@@ -153,6 +155,7 @@ backend/
 │   │   ├── evidence/
 │   │   │   ├── api.py                     # Evidence API packers
 │   │   │   ├── assembler.py               # Merge predicate outputs → cards
+│   │   │   ├── coerce.py                  #
 │   │   │   ├── types.py                   # Evidence card types
 │   │   │   └── writer.py                  # Write evidence.jsonl (append-only)
 │   │   └── rag/
@@ -167,6 +170,8 @@ backend/
 │   │       ├── types.py                   # RAG-facing types
 │   │       └── client/
 │   │           ├── ollama_client.py       # Robust Ollama HTTP client
+│   │           ├── ollama_http.py         #
+│   │           ├── ollama_options.py      #
 │   │           └── protocols.py           # LLM client interface
 │   │
 │   └── infra/                             # Configuration & runtime support
@@ -176,6 +181,8 @@ backend/
 │       │   ├── lifespan.py                # FastAPI lifespan hooks
 │       │   ├── logging_config.py          # Structured logging setup
 │       │   └── paths.py                   # Canonical paths + snapshot/prune
+│       ├── io/
+│       │   └── write_summary.py           #
 │       └── utils/
 │           ├── hashing.py                 # SHA-256 helpers
 │           ├── logging_extras.py          # Logger adapters/decorators
