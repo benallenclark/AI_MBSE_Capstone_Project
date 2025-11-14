@@ -28,7 +28,7 @@ from pathlib import Path
 
 import duckdb
 
-from app.artifacts.evidence.writer import mirror_jsonl_to_parquet
+from app.artifacts.intelligence.cards.writer import mirror_jsonl_to_parquet
 from app.flow.orchestrator import run as orchestrate_run
 from app.infra.core import paths
 from app.infra.core.jobs_db import get_job, update_status
@@ -149,6 +149,4 @@ def run_pipeline_job(job_id: str, model_id: str) -> None:
 
     except Exception as e:
         # Capture any pipeline failure and update job record accordingly.
-        update_status(
-            job_id, "failed", progress=100, message=f"{type(e).__name__}: {e}"
-        )
+        update_status(job_id, "failed", progress=95, message=f"{type(e).__name__}: {e}")

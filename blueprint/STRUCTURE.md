@@ -140,10 +140,14 @@ backend/
 │   │   │   ├── mml_1/
 │   │   │   │   ├── __init__.py
 │   │   │   │   └── predicate_count_tables.py     # Sanity check: required EA tables
-│   │   │   ├── mml_2/
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── predicate_nonempty_names.py   # No empty names on core elements
-│   │   │   │   └── predicate_block_has_port.py   # Blocks expose at least one port
+│   │   │   └── mml_2/
+│   │   │       ├── __init__.py
+│   │   │       ├── predicate_nonempty_names.py   # No empty names on core elements
+│   │   │       └── predicate_block_has_port.py   # Blocks expose at least one port
+│   │   │
+│   │   ├── diagnostics/
+│   │   │   └── missing_ports.py            #
+│   │   │
 │   │   └── adapters/
 │   │       ├── protocols.py                # Vendor adapter contracts
 │   │       ├── router.py                   # Pick adapter for vendor/version

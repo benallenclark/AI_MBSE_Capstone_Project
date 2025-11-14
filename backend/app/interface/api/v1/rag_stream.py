@@ -23,7 +23,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.artifacts.rag.service import ask_stream
+from app.artifacts.intelligence.context.service import ask_stream
 
 # Initialize router for v1 RAG streaming endpoints
 router = APIRouter()

@@ -10,8 +10,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from app.artifacts.evidence.types import Fact, PredicateOutput
-from app.artifacts.evidence.writer import emit_evidence
+from app.artifacts.intelligence.cards.types import Fact, PredicateOutput
+from app.artifacts.intelligence.cards.writer import emit_evidence
 
 # Accept only folders named mml_<N>; used to infer maturity level from filesystem layout.
 _mml_re = re.compile(r"^mml_(\d+)$")

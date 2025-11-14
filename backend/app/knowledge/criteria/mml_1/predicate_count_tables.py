@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/criteria/mml_1/predicate_count_tables.py
+# Module: app/knowledge/criteria/mml_1/predicate_count_tables.py
 # Purpose: MML-1 "is the model parsable?" — required core tables exist & have rows
 # Evidence v2: predicate returns a small, typed result; EvidenceBuilder writes cards
 # ------------------------------------------------------------
@@ -76,6 +76,12 @@ def _core(db: DbLike, ctx: Context):
         "total": counts["expected"],
     }
 
+    # How many of the expected core tables are actually populated?
+    if counts["expected"]:
+        coverage_ratio = counts["nonempty"] / counts["expected"]
+    else:
+        coverage_ratio = 0.0
+
     # Minimal return; decorator will infer probe/mml and emit evidence
     return {
         "passed": passed,
@@ -83,6 +89,14 @@ def _core(db: DbLike, ctx: Context):
         "measure": measure,
         "facts": [],
         "source_tables": list(_EXPECTED),
+        "domain": "Repository Sanity",
+        "severity": (
+            "high"
+            if coverage_ratio < 0.5
+            else "medium"
+            if coverage_ratio < 1.0
+            else "info"
+        ),
     }
 
 

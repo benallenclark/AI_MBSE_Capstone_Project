@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/artifacts/rag/service.py
+# Module: app/artifacts/intelligence/context/service.py
 # Purpose: Orchestrate retrieve → build prompt → LLM (sync/stream) with fallbacks.
 # ------------------------------------------------------------
 
@@ -12,10 +12,10 @@ from collections.abc import Iterable
 from app.infra.core.config import settings
 from app.infra.utils.logging_extras import log_adapter  # existing helper in your tree
 
-from .client.ollama_client import OllamaClient
-from .prompts import build_prompt
+from ..cards.rag_types import AskResult
+from ..client.ollama_client import OllamaClient
+from .prompts import build_prompt, simple_summarize
 from .retrieve import retrieve as _retrieve
-from .types import AskResult
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def ask_stream(
     retrieve_fn=_retrieve,
 ) -> Iterable[str]:
     """Streaming ask: same as ask(), but yields tokens; emits compact summary on error/empty."""
-    lad = log_adapter(logger, cid)
+    lad = log_adapter(log, cid)
     cards = retrieve_fn(question, scope, k=settings.RAG_TOP_K)
 
     if not cards:

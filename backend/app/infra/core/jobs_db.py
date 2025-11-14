@@ -238,28 +238,65 @@ def update_status(
     progress: int | None = None,
     message: str | None = None,
     timings: dict | None = None,
-):
+) -> None:
     """Patch a job's fields and bump `updated_at` (ms).
 
-    Notes
+    Rules
     -----
-    - Only provided fields are modified; others remain unchanged.
-    - `timings` is JSON-encoded to `timings_json`.
-    - No error is raised if `job_id` does not exist (silent no-op).
+    - Progress is clamped to [0, 100].
+    - Progress is monotonic (never decreases vs stored value).
+    - 100% is only allowed when status == "succeeded".
+      If status == "failed" and progress >= 100, it is coerced to 95.
+    - No-op if job_id is unknown (with a warning).
     """
     now = int(time.time() * 1000)
     with _connect() as con:
+        # Load current status/progress to enforce monotonic & terminal semantics.
+        cur = con.execute("SELECT status, progress FROM jobs WHERE id=?", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            import logging
+
+            logging.getLogger("jobs_db").warning(
+                "update_status: unknown job_id=%s", job_id
+            )
+            return
+
+        current_status = str(row["status"])
+        current_progress = int(row["progress"])
+
         sets = ["status=?", "updated_at=?"]
         vals: list[object] = [status, now]
+
+        # Sanitize & enforce progress rules if a value was provided.
         if progress is not None:
+            # clamp to 0..100 and monotonic vs current
+            p = max(0, min(100, int(progress)))
+            p = max(p, current_progress)
+
+            # Only allow 100 when succeeded; keep failures < 100 for UX clarity.
+            if status != "succeeded" and p == 100:
+                p = 95 if status == "failed" else 99
+
             sets.append("progress=?")
-            vals.append(int(progress))
+            vals.append(p)
+
         if message is not None:
             sets.append("message=?")
             vals.append(message)
+
         if timings is not None:
             sets.append("timings_json=?")
             vals.append(json.dumps(timings, ensure_ascii=False))
+
+        # Prevent regress from terminal states (optional guard):
+        # If a job already ended, don't allow it to go back to "running".
+        TERMINAL = {"succeeded", "failed"}
+        if current_status in TERMINAL and status not in TERMINAL:
+            # override attempted non-terminal write
+            sets[0] = "status=?"  # keep placeholder shape
+            vals[0] = current_status  # preserve terminal status
+
         vals.append(job_id)
         con.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id=?", vals)
         con.commit()

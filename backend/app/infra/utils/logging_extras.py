@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/utils/logging_extras.py
+# Module: app/infra/utils/logging_extras.py
 # Purpose: Provide a helper for contextual logging with correlation IDs.
 # ------------------------------------------------------------
 

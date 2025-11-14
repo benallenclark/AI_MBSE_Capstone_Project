@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from app.infra.core.jobs_db import JobRow, get_job
 
@@ -62,6 +62,10 @@ def read_job(job_id: str):
         logger.warning("jobs.read not_found", extra={"job_id": job_id})
         raise HTTPException(status_code=404, detail="job_not_found")
 
+    payload = _payload(row)
+    resp = Response(content=None, media_type="application/json")
+    resp.headers["Cache-Control"] = "no-store"
+
     logger.info(
         "jobs.read",
         extra={
@@ -72,4 +76,4 @@ def read_job(job_id: str):
         },
     )
 
-    return _payload(row)
+    return payload

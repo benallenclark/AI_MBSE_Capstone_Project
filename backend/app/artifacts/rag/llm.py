@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/rag/llm.py
+# Module: app/artifacts/rag/llm.py
 # Purpose: LLM adapters (Ollama now; others can be added later)
 # ------------------------------------------------------------
 

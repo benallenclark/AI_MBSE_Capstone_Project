@@ -22,8 +22,8 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.artifacts.rag.db import missing_ports
-from app.artifacts.rag.service import ask as rag_ask
+from app.artifacts.intelligence.context.service import ask as rag_ask
+from app.knowledge.diagnostics.missing_ports import missing_ports
 
 # Initialize router for RAG v1 endpoints
 router = APIRouter()

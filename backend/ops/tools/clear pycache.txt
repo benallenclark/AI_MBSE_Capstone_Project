@@ -1,0 +1,3 @@
+Get-ChildItem -Recurse -Directory -Filter "__pycache__" |
+    Where-Object { $_.FullName -notmatch '\\.venv\\' } |
+    Remove-Item -Recurse

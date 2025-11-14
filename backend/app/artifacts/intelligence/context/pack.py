@@ -50,15 +50,48 @@ def pack_context(cards: list[dict[str, Any]]) -> str:
     """
     lines: list[str] = []
     for i, c in enumerate(cards, start=1):
-        # Accept either 'body_text' (evidence) or 'body' (SQL views); trim to first line.
-        raw = (c.get("body_text") or c.get("body") or "").strip()
-        body_first_line = raw.splitlines()[0][: settings.RAG_MAX_CARD_CHARS]
+        meta = c.get("metadata") or {}
 
-        # Title fallback ensures readability even when metadata is missing.
-        title = c.get("title") or c.get("doc_id") or "(untitled)"
+        pid = c.get("probe_id") or "unknown_probe"
+        mml = c.get("mml")
+        domain = meta.get("domain")
+        severity = meta.get("severity")
+        status = meta.get("status")
+        sh = meta.get("structured_hint") or {}
+        obs = sh.get("observation") or ""
+        imp = sh.get("implication") or ""
+        rec = sh.get("recommendation") or ""
 
-        # Invariant: every card must include a doc_id (string); enforce upstream.
-        lines.append(f"[{i}] {title} (doc_id={c['doc_id']})\n{body_first_line}")
+        header_bits: list[str] = [f"[{pid}]"]
+        if mml is not None:
+            header_bits.append(f"MML-{mml}")
+        if domain:
+            header_bits.append(str(domain))
+        if severity:
+            header_bits.append(f"severity={severity}")
+        if status:
+            header_bits.append(f"status={status}")
 
-    # Join with blank lines between entries.
+        header = " | ".join(header_bits)
+
+        # Trim each hint line to avoid runaway length
+        def _trim(s: str) -> str:
+            s = (s or "").strip()
+            return s[: settings.RAG_MAX_CARD_CHARS]
+
+        obs_line = _trim(obs)
+        imp_line = _trim(imp)
+        rec_line = _trim(rec)
+
+        # Build a compact 3-line block per card.
+        block_lines = [header]
+        if obs_line:
+            block_lines.append(f"- Observation: {obs_line}")
+        if imp_line:
+            block_lines.append(f"- Implication: {imp_line}")
+        if rec_line:
+            block_lines.append(f"- Recommendation: {rec_line}")
+
+        lines.append("\n".join(block_lines))
+
     return "\n\n".join(lines)

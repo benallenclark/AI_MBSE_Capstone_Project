@@ -83,14 +83,14 @@ class Settings(BaseModel):
     CLEAN_RUN_WIPE_DATA: bool = Field(default=True)
 
     # Model/provider knobs
-    GEN_MODEL: str = "llama3.2:1b"
+    GEN_MODEL: str = "mistral:instruct"  # "llama3.2:1b, phi3:Mini, mistral:instruct
     OLLAMA: str = "ollama"  # "ollama" (CLI) or "http://localhost:11434" (HTTP)
     EMB_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # Retrieval tuning
-    RAG_TOP_K: int = 12
+    RAG_TOP_K: int = 6
     RAG_BM25_ONLY: bool = False
-    RAG_MAX_CARD_CHARS: int = 600
+    RAG_MAX_CARD_CHARS: int = 700
     DEFAULT_MODEL_ID: str = "14b92d4a"
 
     # ---- DuckDB resource knobs (used by from app.flow.ingest.session / loader) ----
@@ -105,16 +105,16 @@ class Settings(BaseModel):
     LLM_TOP_P: float = Field(0.9, ge=0.0, le=1.0, description="Nucleus sampling")
     LLM_TOP_K: int = Field(40, ge=0, description="Top-K sampling (Ollama)")
     LLM_MAX_TOKENS: int = Field(
-        512, ge=16, le=8192, description="Max new tokens / num_predict"
+        2048, ge=16, le=8192, description="Max new tokens / num_predict"
     )
     LLM_NUM_CTX: int = Field(
-        4096, ge=512, le=32768, description="Context window for Ollama models"
+        3072, ge=512, le=32768, description="Context window for Ollama models"
     )
     LLM_REPEAT_PENALTY: float = Field(
-        1.1, ge=0.0, le=2.0, description="Discourage repetition (Ollama)"
+        1.0, ge=0.0, le=2.0, description="Discourage repetition (Ollama)"
     )
     LLM_SEED: int | None = Field(
-        None, description="Deterministic generations if supported"
+        42, description="Deterministic generations if supported"
     )
     LLM_PROVIDER: Literal["ollama", "openai"] = "ollama"  # lets us switch later
 

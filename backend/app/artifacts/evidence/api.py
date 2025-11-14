@@ -14,8 +14,8 @@ Responsibilities
 
 from pathlib import Path
 
-from .assembler import EvidenceBuilder
-from .types import PredicateOutput
+from ..intelligence.cards.assembler import EvidenceBuilder
+from ..intelligence.cards.types import PredicateOutput
 
 
 def emit_evidence(model_dir: Path, ctx: dict, output: PredicateOutput):

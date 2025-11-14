@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/criteria/mml_2/predicate_block_has_port.py
+# Module: app/knowledge/criteria/mml_2/predicate_block_has_port.py
 # Purpose: MML-2 — every Block has ≥1 Port, emit full evidence per block
 # Evidence v2: predicates return a small typed output; builder writes cards
 # ------------------------------------------------------------
@@ -111,6 +111,9 @@ def _core(db: DbLike, ctx: Context) -> dict[str, Any]:
     blocks_missing_ports = blocks_total - blocks_with_ports
     passed = blocks_missing_ports == 0
 
+    # Coverage ratio: how many blocks actually expose ports?
+    ratio = (blocks_with_ports / blocks_total) if blocks_total else 0.0
+
     # Build facts: one per block (decorator will emit evidence)
     facts: list[dict[str, Any]] = []
     for b in sorted(
@@ -152,6 +155,14 @@ def _core(db: DbLike, ctx: Context) -> dict[str, Any]:
         "measure": measure,
         "facts": facts,
         "source_tables": ["t_object"],
+        "domain": "Interface Definition",
+        "severity": (
+            "high"
+            if blocks_total and ratio < 0.5
+            else "medium"
+            if blocks_total and ratio < 0.8
+            else "low"
+        ),
     }
 
 

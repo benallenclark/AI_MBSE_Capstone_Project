@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/artifacts/rag/retrieve.py
+# Module: app/artifacts/intelligence/context/retrieve.py
 # Purpose: Run the retrieval pipeline (BM25 → summaries → recent) with self-heal.
 # ------------------------------------------------------------
 
@@ -11,8 +11,8 @@ from typing import Any
 
 from app.infra.core import paths  # <- to load schema.sql for self-heal
 
-from .diagnostics import db_path
-from .query_normalizer import build_match
+from ...rag.diagnostics import db_path
+from ...rag.query_normalizer import build_match
 
 log = logging.getLogger(__name__)
 
@@ -72,44 +72,70 @@ def retrieve(question: str, scope: dict[str, Any], k: int = 8) -> list[dict]:
     con.row_factory = sqlite3.Row
 
     rows: list[sqlite3.Row] = []
+    src = "fts"
+
     with con:
-        # 1) BM25 on normalized MATCH (uses v_search)
         match = build_match(question)
-        log.debug("rag.retrieve.match=%s", build_match(question)[:120])
-        try:
-            rows = _run(
-                con,
-                "SELECT doc_id, title, body, score "
-                "FROM v_search "
-                "WHERE v_search MATCH ? "
-                "ORDER BY score ASC "  # v_search already computes bm25(f) AS score
-                "LIMIT ?",
-                (match, k),
+        log.debug("rag.retrieve.match=%s", match[:120])
+
+        rows = []
+        if match:
+            # Try weighted BM25 first (title > ctx_hdr > body_text).
+            sql_weighted = (
+                "SELECT d.doc_id, d.title, d.body_text AS body, "
+                "       bm25(doc_fts, 5.0, 2.0, 1.0) AS score "
+                "FROM doc AS d "
+                "JOIN doc_fts ON doc_fts.rowid = d.rowid "
+                "WHERE doc_fts MATCH ? "
+                # This only gets the summary evidence
+                "  AND d.doc_type = 'summary' "
+                "ORDER BY score DESC "
+                "LIMIT ?"
             )
-        except sqlite3.OperationalError:
-            # If FTS fails for other reasons, fall back below.
-            rows = []
+            # Fallback to unweighted BM25 if schema/column count differs.
+            sql_unweighted = (
+                "SELECT d.doc_id, d.title, d.body_text AS body, "
+                "       bm25(doc_fts) AS score "
+                "FROM doc AS d "
+                "JOIN doc_fts ON doc_fts.rowid = d.rowid "
+                "WHERE doc_fts MATCH ? "
+                # This only gets the summary evidence
+                "  AND d.doc_type = 'summary' "
+                "ORDER BY score DESC "
+                "LIMIT ?"
+            )
+            try:
+                rows = _run(con, sql_weighted, (match, k))
+                fts_count = len(rows)
+                log.debug("rag.retrieve.fts_hits=%d match=%r", fts_count, match)
+            except sqlite3.OperationalError as e:
+                log.debug("weighted bm25 failed (%s); trying unweighted", e)
+                try:
+                    rows = _run(con, sql_unweighted, (match, k))
+                except sqlite3.OperationalError as e2:
+                    log.warning("FTS query failed; will fallback: %s", e2)
+                    rows = []
 
         if not rows:
-            # 2) summaries fallback
+            src = "v_summaries"
             rows = _run(
                 con,
-                "SELECT doc_id, title, body, score "
-                "FROM v_summaries "
-                "ORDER BY created_at DESC "
-                "LIMIT ?",
+                "SELECT doc_id, title, body, NULL AS score "
+                "FROM v_summaries ORDER BY created_at DESC LIMIT ?",
                 (k,),
             )
 
         if not rows:
-            # 3) recent fallback
+            src = "v_recent"
             rows = _run(
                 con,
-                "SELECT doc_id, title, body, score "
-                "FROM v_recent "
-                "ORDER BY created_at DESC "
-                "LIMIT ?",
+                "SELECT doc_id, title, body, NULL AS score "
+                "FROM v_recent ORDER BY created_at DESC LIMIT ?",
                 (k,),
             )
 
-    return [dict(r) for r in rows]
+    log.debug("rag.retrieve.source=%s hits=%d", src, len(rows))
+    out = [dict(r) for r in rows]
+    for o in out:
+        o.setdefault("_src", src)
+    return out

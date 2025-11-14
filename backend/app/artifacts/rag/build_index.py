@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Module: app/rag/build_index.py
+# Module: app/artifacts/rag/build_index.py
 # Purpose: Build a per-model SQLite RAG index from evidence.jsonl (doc table + FTS).
 # ------------------------------------------------------------
 
@@ -95,16 +95,49 @@ def iter_rows():
 
     Notes
     -----
-    - Synthesizes `doc_id` as `<model_id>/<probe_id>/<n>` if missing (n is line index).
-    - Writes metadata as UTF-8 JSON (preserves non-ASCII characters).
+    - This function is "smart":
+        1. It inserts ALL cards (summaries + instances).
+        2. It creates a MAXIMALLY-RICH body_text for summary cards.
+        3. It uses the default WEAK body_text for instance cards.
     """
     with jsonl_path.open("r", encoding="utf-8") as fh:
         for n, line in enumerate(fh):
             s = line.strip()
             if not s:
                 continue
+
             j = json.loads(s)
             md = j.get("metadata", {}) or {}
+            doc_type = j.get("doc_type") or "evidence"
+
+            body_to_index = ""
+
+            # --- This is the new logic ---
+            if doc_type == "summary":
+                # FIX 1: Build the ULTIMATE rich body for FTS
+                hint = md.get("structured_hint", {})
+                observation = hint.get("observation", "")
+                implication = hint.get("implication", "")
+                recommendation = hint.get("recommendation", "")
+
+                # Get the keywords your assembler already made!
+                keywords = " ".join(md.get("keywords", []))
+                title = j.get("title", "")
+
+                # This is the text FTS (BM25) will search over.
+                # We are stuffing it with every useful text field.
+                body_to_index = (
+                    f"{title}\n"
+                    f"{observation}\n"
+                    f"{implication}\n"
+                    f"{recommendation}\n"
+                    f"{keywords}"
+                )
+            else:
+                # FIX 2: Use the default (weak) body for all other cards
+                body_to_index = j.get("body") or j.get("body_text", "")
+            # --- End of new logic ---
+
             yield (
                 # If `doc_id` is missing, synthesize from (model_id/probe_id/n). Stable ordering
                 # matters for reproducibility. Beware empty model_id/probe_id → ambiguous IDs.
@@ -115,21 +148,33 @@ def iter_rows():
                 md.get("version"),
                 j.get("mml"),
                 j.get("probe_id"),
-                j.get("doc_type") or "evidence",
+                doc_type,
                 md.get("subject_type"),
                 str(md.get("subject_id") or ""),
                 j.get("title"),
                 j.get("ctx_hdr", ""),
-                j.get("body") or j.get("body_text", ""),
+                # --- Use the new "smart" body text ---
+                body_to_index,
                 json.dumps(md, ensure_ascii=False),
             )
 
 
 # Stream rows into a single transaction; commit below makes it atomic.
-# For very large inputs, consider chunking and periodic commits to reduce lock time.
+# ... [Rest of the file is identical] ...
 ins.executemany(insert_sql, iter_rows())
 con.commit()
 print("Writing per-model RAG DB:", sqlite_path)
 print("Docs:", con.execute("SELECT COUNT(*) FROM doc").fetchone()[0])
 print("FTS:", con.execute("SELECT COUNT(*) FROM doc_fts").fetchone()[0])
+# Keep FT S in top shape; ignore if not applicable to your FTS config.
+try:
+    con.execute("INSERT INTO doc_fts(doc_fts) VALUES('rebuild')")
+    print("FTS rebuilt")
+except Exception:
+    pass
+try:
+    con.execute("INSERT INTO doc_fts(doc_fts) VALUES('optimize')")
+    print("FTS optimized")
+except Exception:
+    pass
 con.close()
