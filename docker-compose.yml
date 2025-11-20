@@ -1,0 +1,23 @@
+services:
+  # Service 1: The Graph Database
+  neo4j:
+    image: neo4j:latest
+    container_name: mbse-graph
+    ports:
+      - '7474:7474' # HTTP Browser Interface
+      - '7687:7687' # Bolt Protocol (for Python)
+    environment:
+      # Sets the initial password.
+      # Default user is 'neo4j'.
+      - NEO4J_AUTH=neo4j/password
+      # Install the APOC library automatically
+      - NEO4J_PLUGINS=["apoc"]
+      # Allow APOC to run unrestricted (required for internal generation)
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      # Persist data so we don't lose it if we restart the container
+      # (Even though we wipe it logically, we want the server stable)
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:

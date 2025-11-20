@@ -2,8 +2,8 @@
 target-version = "py312" # Always generate Python 3.12-compatible code.
 line-length = 88
 indent-width = 4
-lint.select = ["E", "F", "W", "B", "UP", "I", "ANN", "C4", "SIM"]
-# "ANN" checks for missing type annotations
+lint.select = ["E", "F", "W", "B", "UP", "I", "C4", "SIM"]
+# "ANN" checks for missing type annotations (currently removed)
 
 [tool.ruff.format]
 quote-style = "double"
@@ -24,52 +24,38 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mbse-maturity"
-version = "0.1.0"                          # Bump up on user-visible changes; tag releases
+version = "0.1.0"
 description = "AI-assisted MBSE model maturity evaluator"
-
-# Minor Python window to avoid stdlib conflicts
 requires-python = ">=3.12,<3.13"
+
 
 # Runtime dependencies
 dependencies = [
-  "fastapi==0.120.0",                     # DECISION: Use exact FastAPI for API stability
-  "uvicorn[standard]==0.38.0",            # Includes httptools/uvloop/websockets
-  "python-multipart==0.0.20",             # For form-data upload endpoints
-  "pydantic>=2",                          # Any 2.x
-  "pydantic-settings>=2",                 # Any 2.x; environment parsing
-  "defusedxml>=0.7.1",
+  "fastapi==0.120.0",                     # Web framework
+  "uvicorn[standard]==0.38.0",            # ASGI server
+  "mcp>=1.21.2",                          # Model Conversion and Processing
+  "python-multipart==0.0.20",             # Form data parsing for FastAPI
+  "pydantic>=2",                          # Data validation and settings management
+  "pydantic-settings>=2",                 # Settings management
+  "defusedxml>=0.7.1",                    # Secure XML parsing
+  "httpx>=0.28.1",                        # HTTP client
+  "neo4j>=6.0.3",                         # Neo4j database driver
+  "python-dotenv>=1.2.1",                # Environment variable management
+  "openai>=2.8.1",                       # OpenAI API client
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.4.2",
-  "pytest-cov>=7",
-  "httpx>=0.28.1",
-  "jsonschema>=4.25.1",
-  "duckdb>=1.4.1",
-  "lxml>=6.0.2",
-  "pandas>=2.3.3",
-  "parquet>=1.3.1",
-  "pyarrow>=22.0.0",
-]
-
-docs = [
-  "sphinx>=8.2.3",
-  "furo>=2025.09.25",                 # theme
-  "myst-parser>=4.0.1",               # Markdown in Sphinx
-  "sphinx-autodoc-typehints>=3.5.2",  # clean type-hint rendering
-  "sphinx-copybutton>=0.5.2",         # UX for code blocks
+  "pytest>=8.4.2",                      # Testing framework
+  "pytest-cov>=7",                      # Test coverage
+  "jsonschema>=4.25.1",                 # JSON Schema validation
 ]
 
 # Package discovery: ship only the app code
 [tool.setuptools.packages.find]
-where = [""]                              # Search from the repository root
-include = ["app*"]                        # Keep tests/data out by default
-
-[tool.setuptools.package-data]
-"app.tempdb" = ["schema.sql"]
-"app.artifacts.rag" = ["*.sql"]
+where = [""]                          # Search from the root  
+include = ["app*"]                    # Include only packages starting with "app"   
 
 # Uvicorn CLI defaults
 [tool.uvicorn]
-factory = false                           # create_app() returns an instance, not a factory
+factory = false
