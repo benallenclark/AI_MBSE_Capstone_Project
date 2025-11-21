@@ -1,28 +1,40 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { type AnalyzeResponse } from '../../services/upload-service';
+import { type AnalyzeResponse, getMaturityReport, toAnalyzeResponse } from '../../services/upload-service';
 import Navigation from '../../components/shared/navigation/navigation';
 import ResultsPanel from '../../components/results/results-panel';
 import ChatPanel from '../../components/chat/chat-panel/chat-panel';
 import './analysis-results.css';
 
 export default function AnalysisResults() {
-  const location = useLocation();
+  // 1. Get the sessionId from the URL parameters
+  const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const [analysisData, setAnalysisData] = useState<AnalyzeResponse | null>(null);
 
   useEffect(() => {
-    // Get analysis data from navigation state
-    const data = location.state?.analysisData as AnalyzeResponse | undefined;
-    
-    if (!data) {
-      // If no data, redirect back to upload page
+    if (!sessionId) {
       navigate('/');
       return;
     }
-    
-    setAnalysisData(data);
-  }, [location.state, navigate]);
+
+    // 2. Poll the backend for the maturity report until it's ready
+    const intervalId = setInterval(async () => {
+      try {
+        const report = await getMaturityReport(sessionId);
+        if (report) {
+          // 3. Convert and store the analysis data once available
+          setAnalysisData(toAnalyzeResponse(report));
+          clearInterval(intervalId);  // Stop polling once we have the data
+        }
+      } catch (error) {
+        console.error("Waiting for analysis...", error);
+      }
+    }, 500); // Check every half second
+
+    // 4. stop polling if user leaves the page
+    return () => clearInterval(intervalId);
+  }, [sessionId, navigate]);
 
   const handleNavigate = (href: string) => {
     navigate(href);
@@ -35,21 +47,23 @@ export default function AnalysisResults() {
   if (!analysisData) {
     return (
       <div className="analysis-results-loading">
-        <p>Loading analysis results...</p>
+        <div className="loading-spinner"></div>
+        <p>Loading analysis results for session {sessionId}...</p>
       </div>
     );
   }
 
   const navigationItems = [
     { id: 'upload', label: 'Upload', href: '/' },
-    { id: 'results', label: 'Results', href: '/results' },
+    // 5. Add a Results link with the current sessionId
+    { id: 'results', label: 'Results', href: `/results/${sessionId}` },
   ];
 
   return (
     <div className="analysis-results-page">
       <Navigation
         items={navigationItems}
-        currentPath="/results"
+        currentPath={`/results/${sessionId}`} // Highlight the Results link
         onNavigate={handleNavigate}
       />
       
@@ -62,6 +76,9 @@ export default function AnalysisResults() {
             </span>
             <span className="metadata-item">
               <strong>Version:</strong> {analysisData.model.version}
+            </span>
+            <span className="metadata-item">
+              <strong>ID:</strong> {analysisData.model.model_id}
             </span>
           </div>
         </header>
@@ -82,4 +99,3 @@ export default function AnalysisResults() {
     </div>
   );
 }
-

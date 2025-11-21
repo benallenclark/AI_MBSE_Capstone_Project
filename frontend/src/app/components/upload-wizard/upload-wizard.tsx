@@ -1,9 +1,13 @@
 import { useState } from 'react';
+import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { uploadAndAnalyze, type AnalyzeResponse } from '../../services/upload-service';
 import FileDrop from '../shared/file-drop/file-drop';
 import UploadItemStatus, { type UploadStatus } from './components/upload-item-status/upload-item-status';
 import './upload-wizard.css';
+
+// --- CONFIGURATION ---
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
+const BATCH_SIZE = 1000;
 
 interface ModelFile {
   file: File;
@@ -12,48 +16,55 @@ interface ModelFile {
   modelId?: string;
 }
 
-export default function UploadWizard() {
+interface UploadWizardProps {
+  onAnalysisFinished?: (sessionId: string) => void;
+}
+
+export default function UploadWizard({ onAnalysisFinished }: UploadWizardProps) {
   const navigate = useNavigate();
+
+ // --- STATE ---
   const [selectedFile, setSelectedFile] = useState<ModelFile | null>(null);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('pending');
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | undefined>();
-  const [analysisResult, setAnalysisResult] = useState<AnalyzeResponse | null>(null);
 
+  // --- Handlers ---
   const handleFilesSelected = (files: File[]) => {
     if (files.length > 0) {
       setSelectedFile({
         file: files[0],
-        vendor: 'sparx', // default
+        vendor: 'sparx',
         version: '',
         modelId: ''
       });
-      // Reset upload state when new file is selected
       setUploadStatus('pending');
       setUploadProgress(0);
       setUploadError(undefined);
-      setAnalysisResult(null);
     }
   };
 
-  const updateFileMetadata = (updates: Partial<ModelFile>) => {
-    if (selectedFile) {
-      setSelectedFile({ ...selectedFile, ...updates });
-    }
-  };
+  // Not used since metadata input is disabled
+  // const updateFileMetadata = (updates: Partial<ModelFile>) => {
+  //   if (selectedFile) {
+  //     setSelectedFile({ ...selectedFile, ...updates });
+  //   }
+  // };
 
   const removeFile = () => {
     setSelectedFile(null);
     setUploadStatus('pending');
     setUploadProgress(0);
     setUploadError(undefined);
-    setAnalysisResult(null);
   };
 
+  // Modified: only care that a file exists and status is pending.
   const canUpload = () => {
-    return selectedFile && selectedFile.vendor && selectedFile.version && uploadStatus === 'pending';
+    return !!selectedFile && uploadStatus === 'pending';
   };
 
+
+  // --- THE UPLOAD LOGIC ---
   const handleUpload = async () => {
     if (!selectedFile) return;
 
@@ -62,40 +73,79 @@ export default function UploadWizard() {
     setUploadError(undefined);
 
     try {
-      const result = await uploadAndAnalyze({
-        file: selectedFile.file,
-        vendor: selectedFile.vendor,
-        version: selectedFile.version,
-        modelId: selectedFile.modelId,
-        onProgress: (progress) => {
-          setUploadProgress(progress);
-        },
+      // 1. START
+      const startRes = await axios.post(`${API_BASE_URL}/api/ingest/start`);
+      const sessionId = startRes.data.session_id;
+      
+      if (!sessionId) throw new Error("Failed to initialize session ID");
+
+      // 2. READ
+      const fileContent = await readFileAsText(selectedFile.file);
+      const allLines = fileContent.split(/\r\n|\n/);
+      const totalLines = allLines.length;
+      
+      // 3. BATCH
+      for (let i = 0; i < totalLines; i += BATCH_SIZE) {
+        const chunk = allLines.slice(i, i + BATCH_SIZE);
+        const validLines = chunk.filter(line => line.trim().length > 0);
+        
+        if (validLines.length > 0) {
+           await axios.post(`${API_BASE_URL}/api/ingest/batch`, {
+             session_id: sessionId,
+             lines: validLines
+           });
+        }
+        const percentComplete = Math.round(((i + chunk.length) / totalLines) * 100);
+        setUploadProgress(percentComplete);
+      }
+
+      // 4. FINISH
+      await axios.post(`${API_BASE_URL}/api/ingest/finish`, {
+        session_id: sessionId
       });
 
       setUploadStatus('complete');
       setUploadProgress(100);
-      setAnalysisResult(result);
 
-      // Navigate to results page with analysis data
-      navigate('/results', { state: { analysisData: result } });
-    } catch (error) {
+      // 5. NAVIGATE (after a short delay to let analysis start)
+      setTimeout(() => {
+        if (onAnalysisFinished) {
+          onAnalysisFinished(sessionId);
+        } else {
+          navigate(`/results/${sessionId}`);
+        }
+      }, 500);
+
+    } catch (error: any) {
+      console.error(error);
       setUploadStatus('error');
-      setUploadError(error instanceof Error ? error.message : 'Upload failed');
+      const msg = error.response?.data?.detail || error.message || 'Upload failed';
+      setUploadError(msg);
     }
+  };
+
+  // Helper to read file content
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) || '');
+      reader.onerror = (e) => reject(e);
+      reader.readAsText(file);
+    });
   };
 
   return (
     <div className="upload-wizard">
       <div className="upload-wizard-header">
         <h1>Upload MBSE Model</h1>
-        <p className="upload-subtitle">Upload and analyze your model for maturity assessment</p>
+        <p className="upload-subtitle">Upload manually or use the Cameo plugin</p>
       </div>
 
       <div className="upload-wizard-content">
         {!selectedFile ? (
           <FileDrop
             onFilesSelected={handleFilesSelected}
-            acceptedFileTypes={['.xmi', '.xml']}
+            acceptedFileTypes={['.json', '.xmi', '.xml', '.txt']}
             maxFiles={1}
           />
         ) : (
@@ -109,25 +159,18 @@ export default function UploadWizard() {
                   </span>
                 </div>
                 {uploadStatus === 'pending' && (
-                  <button
-                    onClick={removeFile}
-                    className="remove-file-button"
-                    aria-label="Remove file"
-                  >
-                    ✕
-                  </button>
+                  <button onClick={removeFile} className="remove-file-button">✕</button>
                 )}
               </div>
-
-              <div className="file-config-fields">
+              
+              {/* Commented out to disable manual metadata input for now */}
+              {/* <div className="file-config-fields">
                 <div className="field-group">
                   <label htmlFor="vendor-select">Vendor *</label>
                   <select
                     id="vendor-select"
                     value={selectedFile.vendor}
-                    onChange={(e) => updateFileMetadata({
-                      vendor: e.target.value as 'sparx' | 'cameo'
-                    })}
+                    onChange={(e) => updateFileMetadata({ vendor: e.target.value as 'sparx' | 'cameo' })}
                     className="vendor-select"
                     disabled={uploadStatus !== 'pending'}
                   >
@@ -161,7 +204,7 @@ export default function UploadWizard() {
                     disabled={uploadStatus !== 'pending'}
                   />
                 </div>
-              </div>
+              </div> */}
 
               {uploadStatus !== 'pending' && (
                 <div className="upload-status-section">
@@ -169,26 +212,7 @@ export default function UploadWizard() {
                     status={uploadStatus}
                     progress={uploadProgress}
                     message={uploadError}
-                    indeterminate={uploadStatus === 'uploading' && uploadProgress === 0}
                   />
-                </div>
-              )}
-
-              {uploadStatus === 'complete' && analysisResult && (
-                <div className="analysis-results">
-                  <h3>Analysis Results</h3>
-                  <div className="results-summary">
-                    <div className="result-item">
-                      <span className="result-label">Maturity Level:</span>
-                      <span className="result-value">{analysisResult.maturity_level}</span>
-                    </div>
-                    <div className="result-item">
-                      <span className="result-label">Tests Passed:</span>
-                      <span className="result-value">
-                        {analysisResult.summary.passed} / {analysisResult.summary.total}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -202,14 +226,12 @@ export default function UploadWizard() {
                 </button>
               )}
 
-              {uploadStatus === 'complete' && (
-                <button
-                  onClick={removeFile}
-                  className="button-primary"
-                >
+              {/* Disabled since we only analyze 1 model at a time */}
+              {/* {uploadStatus === 'complete' && (
+                <button onClick={removeFile} className="button-primary">
                   Upload Another Model
                 </button>
-              )}
+              )} */}
             </div>
           </div>
         )}

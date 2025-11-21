@@ -1,49 +1,49 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
 
-export interface UploadProgressCallback {
-  (progress: number): void;
-}
+// Backend Analysis Report Types & API Functions
+// --- 1. BACKEND TYPES (Raw response from /api/analysis/{id}) ---
 
-export interface AnalyzeUploadParams {
-  file: File;
-  vendor: 'sparx' | 'cameo';
-  version: string;
-  modelId?: string;
-  onProgress?: UploadProgressCallback;
-}
+export type RuleViolation = { id: string; message: string };
 
-export interface UploadResponse {
-  job_id: string;
-  model_id: string;
-  status: string;
-  sha256: string;
-  links: {
-    self: string;
-    result: string;
+export type RuleResult = {
+  id: string;
+  rule_id?: string;
+  status?: string;
+  passed: boolean;
+  violation_count?: number;
+  violations?: RuleViolation[];
+  description?: string;
+  mml?: number;
+  details?: any;
+};
+
+export type BackendAnalysisSummary = {
+  schema_version: string;
+  model: {
+    vendor: string;
+    version: string;
+    model_id: string;
   };
-}
-
-export interface JobStatus {
-  job_id: string;
-  model_id: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
-  progress: number;
-  message?: string;
-  timings?: Record<string, any>;
-  links: {
-    self: string;
-    result: string;
+  maturity_level: number;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
   };
-}
+  results: RuleResult[];
+};
+
+// --- 2. FRONTEND TYPES (Adapted for UI consumption) ---
 
 export interface AnalyzeResponse {
   schema_version: string;
   model: {
     vendor: string;
     version: string;
-    model_id?: string;
+    model_id: string;
   };
   maturity_level: number;
   summary: {
@@ -55,207 +55,146 @@ export interface AnalyzeResponse {
     id: string;
     mml: number;
     passed: boolean;
-    details: Record<string, any>;
+    details: {
+      violation_count?: number;
+      violations?: RuleViolation[];
+      description?: string;
+    };
     error?: string;
   }>;
 }
 
-/**
- * Poll job status until completion
+// --- 3. API FUNCTIONS ---
+
+/** Fetches the maturity report from the backend by session ID.
+ * Returns null if the report is not found or still processing.
  */
-async function pollJobStatus(jobId: string, onProgress?: (progress: number) => void): Promise<JobStatus> {
-  const maxAttempts = 120; // 2 minutes with 1 second intervals
-  let attempts = 0;
-
-  while (attempts < maxAttempts) {
-    try {
-      const response = await axios.get<JobStatus>(`${API_BASE_URL}/v1/jobs/${jobId}`);
-      const job = response.data;
-
-      if (onProgress && job.progress) {
-        onProgress(job.progress);
-      }
-
-      if (job.status === 'succeeded') {
-        return job;
-      }
-
-      if (job.status === 'failed') {
-        throw new Error(job.message || 'Analysis failed');
-      }
-
-      // Wait 1 second before next poll
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      attempts++;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        throw new Error('Job not found');
-      }
-      throw error;
+export async function getMaturityReport(
+  sessionId: string
+): Promise<BackendAnalysisSummary | null> {
+  const url = `${API_BASE_URL}/api/analysis/${encodeURIComponent(sessionId)}`;
+  try {
+    const { data } = await axios.get<BackendAnalysisSummary>(url);
+    if (!data || typeof data !== 'object') return null;
+    return data;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      return null; // Analysis still processing or not found
     }
+    throw err;
   }
-
-  throw new Error('Analysis timeout - job did not complete in time');
 }
 
-/**
- * Backend response structure from /v1/models/{model_id}
- */
-interface BackendModelResponse {
-  schema_version: string;
-  model_id: string;
-  model: {
-    vendor: string;
-    version: string;
-  };
-  maturity_level: number;
-  counts: {
-    predicates_total: number;
-    predicates_passed: number;
-    predicates_failed: number;
-    evidence_docs: number;
-  };
-  fingerprint: string;
-  levels: Record<string, {
-    num_predicates: {
-      expected: number;
-      present: number;
-      passed: number;
-      failed: number;
-      missing: number;
-    };
-    predicates: Array<{
-      id: string;
-      passed: boolean;
-      counts: Record<string, any>;
-      source_tables?: string[];
-    }>;
-  }>;
-}
+/** Converts the backend analysis summary to the frontend AnalyzeResponse format */
+export function toAnalyzeResponse(
+  report: BackendAnalysisSummary
+): AnalyzeResponse {
+  const resultsList = Array.isArray(report.results) ? report.results : [];
 
-/**
- * Transform backend response to frontend format
- */
-function transformBackendResponse(backendData: BackendModelResponse): AnalyzeResponse {
-  // Flatten all predicates from all levels into a single results array
-  const results: AnalyzeResponse['results'] = [];
-
-  Object.entries(backendData.levels || {}).forEach(([levelKey, levelData]) => {
-    const mml = parseInt(levelKey, 10);
-    levelData.predicates.forEach((predicate) => {
-      results.push({
-        id: predicate.id,
-        mml: mml,
-        passed: predicate.passed,
-        details: predicate.counts || {},
-        error: undefined,
-      });
-    });
-  });
+  // Extract Session ID from the model object
+  const sessionId = report.model?.model_id || 'unknown';
+  const vendor = report.model?.vendor || 'unknown';
+  const version = report.model?.version || 'unknown';
 
   return {
-    schema_version: backendData.schema_version,
+    schema_version: report.schema_version || '1',
     model: {
-      vendor: backendData.model.vendor,
-      version: backendData.model.version,
-      model_id: backendData.model_id,
+      vendor: vendor,
+      version: version,
+      model_id: sessionId,
     },
-    maturity_level: backendData.maturity_level,
-    summary: {
-      total: backendData.counts.predicates_total,
-      passed: backendData.counts.predicates_passed,
-      failed: backendData.counts.predicates_failed,
+    maturity_level: report.maturity_level || 0,
+    summary: report.summary || {
+      total: resultsList.length,
+      passed: resultsList.filter((r) => r.passed).length,
+      failed: resultsList.filter((r) => !r.passed).length,
     },
-    results: results,
+    results: resultsList.map((r) => {
+      const dets = r.details || {};
+
+      return {
+        id: r.id || r.rule_id || 'unknown',
+        mml: r.mml || 0,
+        passed: !!r.passed,
+        details: {
+          violation_count: dets.violation_count ?? r.violation_count,
+          violations: dets.violations ?? r.violations,
+          description: dets.description ?? r.description,
+        },
+      };
+    }),
   };
 }
 
-/**
- * Get analysis results for a model
- */
-async function getModelResults(modelId: string): Promise<AnalyzeResponse> {
-  try {
-    const response = await axios.get<BackendModelResponse>(`${API_BASE_URL}/v1/models/${modelId}`);
+// --- 4. UPLOAD & INGESTION FUNCTIONS ---
 
-    // Transform backend response to frontend format
-    return transformBackendResponse(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      const message = error.response?.data?.detail || error.message;
-      throw new Error(`Failed to get results: ${message}`);
-    }
-    throw error;
-  }
+export interface UploadAndAnalyzeArgs {
+  file: File;
+  vendor: 'sparx' | 'cameo';
+  version: string;
+  modelId?: string;
+  onProgress?: (progress: number) => void;
 }
 
-/**
- * Upload and analyze a model file with progress tracking
- *
- * @param params - Upload parameters including file, vendor, version, and progress callback
- * @returns Promise resolving to the analysis response
- * @throws Error if upload fails
- */
-export const uploadAndAnalyze = async ({
-  file,
-  vendor,
-  version,
-  modelId,
-  onProgress,
-}: AnalyzeUploadParams): Promise<AnalyzeResponse> => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('vendor', vendor);
-  formData.append('version', version);
+export interface UploadAndAnalyzeResult {
+  sessionId: string;
+}
 
-  if (modelId) {
-    formData.append('model_id', modelId);
+/** Uploads the model file in batches and triggers analysis.
+ * Calls onProgress callback with percentage (0-100) after each batch.
+ */
+export async function uploadAndAnalyze(
+  args: UploadAndAnalyzeArgs
+): Promise<UploadAndAnalyzeResult> {
+  const { file, vendor, version, modelId, onProgress } = args;
+
+  // 1) Read file and split into lines
+  const fileText = await file.text();
+  const lines = fileText.split('\n');
+
+  // Define batch size (number of lines per batch)
+  const BATCH_SIZE = 1000;
+
+  // 2) Start ingest session
+  const startResp = await axios.post(`${API_BASE_URL}/api/ingest/start`, {
+    vendor,
+    version,
+    model_id: modelId ?? null,
+    filename: file.name,
+  });
+
+  const sessionId: string =
+    startResp.data?.session_id ?? startResp.data?.id ?? 'unknown';
+
+  if (!sessionId || sessionId === 'unknown') {
+    throw new Error(
+      'Backend did not return a session id from /api/ingest/start'
+    );
   }
 
-  try {
-    // Step 1: Upload file
-    const uploadResponse = await axios.post<UploadResponse>(
-      `${API_BASE_URL}/v1/analyze/upload`,
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent: any) => {
-          if (progressEvent.total && onProgress) {
-            // Upload is 0-50% of total progress
-            const uploadPercent = Math.round(
-              (progressEvent.loaded * 50) / progressEvent.total
-            );
-            onProgress(uploadPercent);
-          }
-        },
-      }
-    );
+  // 3) Upload lines in batches
+  const totalBatches = Math.max(1, Math.ceil(lines.length / BATCH_SIZE));
 
-    const { job_id, model_id } = uploadResponse.data;
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const start = batchIndex * BATCH_SIZE;
+    const end = start + BATCH_SIZE;
+    const batchLines = lines.slice(start, end);
 
-    // Step 2: Poll for job completion
-    await pollJobStatus(job_id, (jobProgress) => {
-      if (onProgress) {
-        // Job progress is 50-100% of total progress
-        onProgress(50 + Math.round(jobProgress / 2));
-      }
+    await axios.post(`${API_BASE_URL}/api/ingest/batch`, {
+      session_id: sessionId,
+      lines: batchLines,
     });
 
-    // Step 3: Get final results
-    const results = await getModelResults(model_id);
-
     if (onProgress) {
-      onProgress(100);
+      const progress = Math.round(((batchIndex + 1) / totalBatches) * 100);
+      onProgress(progress);
     }
-
-    return results;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      const message = error.response?.data?.detail || error.message;
-      throw new Error(`Upload failed: ${message}`);
-    }
-    throw error;
   }
-};
 
+  // 4) Finish ingestion
+  await axios.post(`${API_BASE_URL}/api/ingest/finish`, {
+    session_id: sessionId,
+  });
+
+  return { sessionId };
+}

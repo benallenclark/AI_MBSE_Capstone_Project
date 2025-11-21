@@ -1,9 +1,13 @@
+import json
+import os
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.core.config import OLLAMA_MODEL
-from app.services import analysis, chat, ingestion
+from app.services import analysis, chat, ingestion, reporting
 
 app = FastAPI()
 
@@ -20,6 +24,15 @@ app.add_middleware(
 
 # In-memory state for simplicity (In prod, use Redis)
 active_sessions = {}
+
+
+@app.get("/api/report/{session_id}", response_class=HTMLResponse)
+async def get_evidence_report(session_id: str, rule: str | None = None):
+    """
+    Returns HTML report.
+    If 'rule' query param is present (e.g. ?rule=MAT-001), filters to that rule.
+    """
+    return reporting.generate_html_report(session_id, filter_rule_id=rule)
 
 
 @app.on_event("startup")
@@ -110,29 +123,60 @@ async def finish_ingestion(payload: FinishModel, background_tasks: BackgroundTas
     return {"status": "analysis_started", "message": "Data received. Analysis running."}
 
 
+@app.get("/api/report/{session_id}", response_class=HTMLResponse)
+async def get_report(session_id: str):
+    """
+    Returns a renderable HTML report for the browser.
+    """
+    html_content = reporting.generate_html_report(session_id)
+    return HTMLResponse(content=html_content)
+
+
 @app.get("/api/analysis/{session_id}")
 async def get_analysis_results(session_id: str):
     """
     Serve only compact summary JSON. Never return raw evidence.
     - If summary_{session_id}.json exists -> return it.
-    - If session_id == 'latest' and summary.json exists -> return it.
+    - If session_id == 'latest' and summary.json exists -> return it with metadata.
     - (Optional) If only evidence exists, try to auto-transform it into a summary
       and return the summary (never the evidence).
     - Otherwise 404 so the frontend keeps polling.
     """
-    import json
-    import os
 
     # 1) Per-session summary
     summary_path = "summary.json"
     if os.path.exists(summary_path):
         with open(summary_path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
 
-    # 2) Dev shim: /api/analysis/latest -> summary.json
+        # Add file modification metadata to help frontend detect changes
+        file_stat = os.stat(summary_path)
+        file_modified_timestamp = file_stat.st_mtime
+
+        # Ensure meta exists in the response
+        if "meta" not in data:
+            data["meta"] = {}
+
+        # Add the file's last modified timestamp
+        data["meta"]["file_modified_at"] = file_modified_timestamp
+
+        return data
+
+    # 2) Dev shim: /api/analysis/latest -> summary.json with metadata
     if session_id == "latest" and os.path.exists("summary.json"):
         with open("summary.json", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+
+        # Add file modification metadata
+        file_stat = os.stat("summary.json")
+        file_modified_timestamp = file_stat.st_mtime
+
+        if "meta" not in data:
+            data["meta"] = {}
+
+        data["meta"]["file_modified_at"] = file_modified_timestamp
+
+        return data
 
     # 3) Optional: auto-transform evidence -> summary (never return evidence)
     try:

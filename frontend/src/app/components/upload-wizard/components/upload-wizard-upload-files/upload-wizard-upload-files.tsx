@@ -3,6 +3,7 @@ import { uploadAndAnalyze } from '../../../../services/upload-service';
 import UploadItemStatus, { type UploadStatus } from '../upload-item-status/upload-item-status';
 import './upload-wizard-upload-files.css';
 
+// Define the UploadItem type to manage each file's upload state
 interface UploadItem {
   file: File;
   vendor: 'sparx' | 'cameo';
@@ -13,6 +14,7 @@ interface UploadItem {
   error?: string;
 }
 
+// Props for the UploadWizardUploadFiles component
 interface UploadWizardUploadFilesProps {
   files?: Array<{
     file: File;
@@ -20,8 +22,10 @@ interface UploadWizardUploadFilesProps {
     version: string;
     modelId?: string;
   }>;
+  onAnalysisFinished?: (sessionId: string) => void;
 }
 
+// Main component for uploading files in the upload wizard
 export default function UploadWizardUploadFiles({ files = [] }: UploadWizardUploadFilesProps) {
   const [uploads, setUploads] = useState<UploadItem[]>(
     files.map(f => ({ ...f, status: 'pending' as UploadStatus, progress: 0 }))
@@ -34,7 +38,8 @@ export default function UploadWizardUploadFiles({ files = [] }: UploadWizardUplo
     setUploads(prev => prev.map((u, i) =>
       i === index ? { ...u, status: 'uploading' as UploadStatus, progress: 0 } : u
     ));
-
+    
+    // Perform the upload and analysis
     try {
       await uploadAndAnalyze({
         file: item.file,
@@ -73,7 +78,7 @@ export default function UploadWizardUploadFiles({ files = [] }: UploadWizardUplo
       }
     }
   };
-
+  
   return (
     <div className="upload-wizard-upload-files">
       <div className="upload-files-header">

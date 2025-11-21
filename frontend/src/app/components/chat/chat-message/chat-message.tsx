@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import './chat-message.css';
 import { RiRobot2Line } from "react-icons/ri";
+import { MdDownload } from "react-icons/md";
 
 interface Message {
   id: string;
@@ -14,6 +15,8 @@ interface ChatMessageProps {
 }
 
 export default function ChatMessage({ message }: ChatMessageProps) {
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
   const formatTime = (date: Date): string => {
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
@@ -22,36 +25,76 @@ export default function ChatMessage({ message }: ChatMessageProps) {
     });
   };
 
+  // Extract download link and filename from message content
+  // Still a work in progress (not 100% working yet)
+  const extractDownloadLink = (content: string): { text: string; downloadUrl?: string; filename?: string } => {
+    // Look for download URL pattern: Download URL: /api/reports/filename.pdf
+    const urlMatch = content.match(/Download URL: (\/api\/reports\/[^\s]+\.pdf)/);
+    const filenameMatch = content.match(/Filename: ([^\n]+)/);
+    
+    if (urlMatch) {
+      return {
+        text: content,
+        downloadUrl: `${API_BASE_URL}${urlMatch[1]}`,
+        filename: filenameMatch ? filenameMatch[1].trim() : 'report.pdf'
+      };
+    }
+    
+    return { text: content };
+  };
+
   const formatContent = (content: string): JSX.Element[] => {
+    const { text, downloadUrl, filename } = extractDownloadLink(content);
+    
     // Simple markdown-like formatting
-    const lines = content.split('\n');
-    return lines.map((line, index) => {
+    const lines = text.split('\n');
+    const elements: JSX.Element[] = [];
+    
+    lines.forEach((line, index) => {
       // Bold text: **text**
-      let formattedLine = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      const formattedLine = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       
       // Bullet points
       if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
-        return (
+        elements.push(
           <li key={index} dangerouslySetInnerHTML={{ __html: formattedLine.replace(/^[•-]\s*/, '') }} />
         );
       }
-      
       // Numbered lists
-      if (/^\d+\./.test(line.trim())) {
-        return (
+      else if (/^\d+\./.test(line.trim())) {
+        elements.push(
           <li key={index} dangerouslySetInnerHTML={{ __html: formattedLine.replace(/^\d+\.\s*/, '') }} />
         );
       }
-      
       // Regular paragraphs
-      if (line.trim()) {
-        return (
+      else if (line.trim()) {
+        elements.push(
           <p key={index} dangerouslySetInnerHTML={{ __html: formattedLine }} />
         );
       }
-      
-      return <br key={index} />;
+      else {
+        elements.push(<br key={index} />);
+      }
     });
+
+    // Add download button if URL exists
+    if (downloadUrl && filename) {
+      elements.push(
+        <div key="download-btn" className="download-button-container">
+          <a 
+            href={downloadUrl} 
+            download={filename}
+            className="download-button"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <MdDownload /> Download Report
+          </a>
+        </div>
+      );
+    }
+
+    return elements;
   };
 
   return (
@@ -72,4 +115,3 @@ export default function ChatMessage({ message }: ChatMessageProps) {
     </div>
   );
 }
-

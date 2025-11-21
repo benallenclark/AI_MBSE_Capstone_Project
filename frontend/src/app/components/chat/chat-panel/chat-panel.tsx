@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { type AnalyzeResponse } from '../../../services/upload-service';
-import { sendChatMessage } from '../../../services/chat-service';
+import { sendChatMessage, type ChatMessage as APIChatMessage } from '../../../services/chat-service';
 import ChatMessage from '../chat-message/chat-message';
 import { MdOutlineArrowCircleUp } from "react-icons/md";
 import { RiRobot2Line } from "react-icons/ri";
@@ -16,6 +16,7 @@ interface Message {
 interface ChatPanelProps {
   analysisData: AnalyzeResponse;
 }
+
 
 export default function ChatPanel({ analysisData }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,18 +76,28 @@ What would you like to know about your analysis results?`,
     setIsLoading(true);
 
     try {
-      // Call the real RAG backend
-      const response = await sendChatMessage(
-        messageContent,
-        analysisData.model?.model_id || 'unknown',
-        analysisData.model?.vendor || 'sparx',
-        analysisData.model?.version || '17.1'
-      );
+      // Build the conversation history for the API
+      // Convert UI messages to API format, excluding the welcome message
+      const history: APIChatMessage[] = messages
+        .filter(msg => msg.id !== 'welcome')
+        .map(msg => ({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+        }));
+
+      // Add the new user message to history
+      history.push({
+        role: 'user',
+        content: messageContent,
+      });
+
+      // Call the MCP-powered backend with full conversation history
+      const response = await sendChatMessage(history);
 
       const botMessage: Message = {
         id: `bot-${Date.now()}`,
         role: 'assistant',
-        content: response.answer,
+        content: response.content,
         timestamp: new Date(),
       };
 

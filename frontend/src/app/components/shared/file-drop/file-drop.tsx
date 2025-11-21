@@ -1,6 +1,6 @@
-import React, { useCallback } from 'react';
+import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { MdOutlineAdd, MdUpload } from 'react-icons/md';
+import { MdOutlineAdd } from 'react-icons/md';
 import './file-drop.css';
 
 interface FileDropProps {
@@ -12,19 +12,22 @@ interface FileDropProps {
 
 export default function FileDrop({ 
   onFilesSelected, 
-  acceptedFileTypes = ['.xmi', '.xml'],
+  acceptedFileTypes = ['.xmi', '.xml', '.json', '.jsonl'],
   maxFiles = 10,
   disabled = false 
 }: FileDropProps) {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     onFilesSelected(acceptedFiles);
   }, [onFilesSelected]);
-
+  
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
     accept: {
       'application/xml': ['.xml', '.xmi'],
-      'text/xml': ['.xml', '.xmi']
+      'text/xml': ['.xml', '.xmi'],
+      'application/json': ['.json', '.jsonl'],
+      'text/plain': ['.jsonl', '.txt'], // just in case jsonl files are labeled as plain text
+      'application/x-jsonlines': ['.jsonl']
     },
     maxFiles,
     disabled,
